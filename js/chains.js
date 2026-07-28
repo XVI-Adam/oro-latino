@@ -34,12 +34,15 @@ const BAKE_MAX = 700;      // max iterations when baking the rest pose
 const GRAB_RADIUS = 46;    // px — how close a pointer must be to grab
 const BREEZE_AMP = 210;    // idle sway acceleration (small: must stay sub-sleep)
 const BREEZE_FREQ = 0.9;   // rad/s
+const CURSOR_SWIPE = 9;    // how strongly cursor motion drags nearby particles
 
 const DEFAULT_PARAMS = {
   damping: 0.985,          // velocity retained per step
   settleSpring: 34,        // settle-assist stiffness at zero energy (px/s² per px)
   sleepThreshold: 0.08,    // avg per-particle energy below which a chain is calm
   laneWidth: 90,           // ± lane half-width around the disc (px)
+  cursorForce: 2100,       // hover repulsion strength at the cursor (px/s²)
+  cursorRadius: 160,       // hover influence radius (px)
 };
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -139,11 +142,14 @@ class Chain {
     }
   }
 
-  // ── integration (gravity + optional breeze/assist/lane) ─────────────────
-  integrate(dt, { breezeAccel = 0, assistK = 0, laneWidth = Infinity, damping = 0.985 }) {
+  // ── integration (gravity + optional breeze/assist/lane/cursor) ──────────
+  integrate(dt, { breezeAccel = 0, assistK = 0, laneWidth = Infinity, damping = 0.985,
+                  cursor = null, cursorForce = 0, cursorRadius = 0 }) {
     const dt2 = dt * dt;
     const P = this.particles;
     const rp = this.restPose;
+    const cR2 = cursorRadius * cursorRadius;
+    const cursorOn = cursor && cursor.active && cursorForce > 0;
     for (let i = 0; i < P.length; i++) {
       const p = P[i];
       if (p.w === 0) continue; // pinned or currently grabbed
@@ -162,6 +168,18 @@ class Chain {
       const off = p.x - this.discX;         // system 4: soft horizontal lane
       if (off > laneWidth) ax -= LANE_K * (off - laneWidth);
       else if (off < -laneWidth) ax -= LANE_K * (off + laneWidth);
+
+      if (cursorOn) {                       // hover: push away + drag along the swipe
+        const dxr = p.x - cursor.x, dyr = p.y - cursor.y;
+        const d2 = dxr * dxr + dyr * dyr;
+        if (d2 < cR2) {
+          const d = Math.sqrt(d2) || 1e-6;
+          const fall = 1 - d / cursorRadius;         // 0 at edge → 1 at cursor
+          const rep = cursorForce * fall * fall;
+          ax += (dxr / d) * rep + cursor.vx * CURSOR_SWIPE * fall;
+          ay += (dyr / d) * rep + cursor.vy * CURSOR_SWIPE * fall;
+        }
+      }
 
       p.px = p.x; p.py = p.y;
       p.x += vx + ax * dt2;
@@ -205,11 +223,14 @@ class Chain {
   }
 
   // ── one simulation step for an awake chain ──────────────────────────────
-  step(dt, simTime, params) {
+  step(dt, simTime, params, cursor) {
     const ke = this.energy();
     const assistK = params.settleSpring * clamp(1 - ke / KE_LIVELY, 0, 1);
     const breezeAccel = BREEZE_AMP * Math.sin(simTime * BREEZE_FREQ + this.phase);
-    this.integrate(dt, { breezeAccel, assistK, laneWidth: params.laneWidth, damping: params.damping });
+    this.integrate(dt, {
+      breezeAccel, assistK, laneWidth: params.laneWidth, damping: params.damping,
+      cursor, cursorForce: params.cursorForce, cursorRadius: params.cursorRadius,
+    });
     this.satisfy(ITER);
   }
 
@@ -388,6 +409,9 @@ export class ChainRail {
     this.dragChain = -1;
     this._downX = 0; this._downY = 0; this._moved = 0;
 
+    // Hover cursor field — pushes/drags nearby chains without grabbing them.
+    this.cursor = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+
     this.layer = document.createElement('canvas');
     this.lctx = this.layer.getContext('2d');
     this._layerDpr = 0;
@@ -413,18 +437,31 @@ export class ChainRail {
     if (changed) this._needsComposite = true;
   }
 
-  _chainAtX(x) {
-    let best = 0, bd = Infinity;
+  /** Wake every chain whose holder is within `radius` of x (plus neighbors). */
+  wakeNear(x, radius) {
     for (const c of this.chains) {
-      const d = Math.abs(c.discX - x);
-      if (d < bd) { bd = d; best = c.index; }
+      if (Math.abs(c.discX - x) <= radius) this.activate(c.index);
     }
-    return best;
   }
+
+  // ── hover cursor field ──────────────────────────────────────────────────
+  setCursor(x, y) {
+    const c = this.cursor;
+    if (c.active) {
+      // approximate px/s velocity (EMA), decayed each frame in update()
+      c.vx = c.vx * 0.5 + (x - c.x) * 60 * 0.5;
+      c.vy = c.vy * 0.5 + (y - c.y) * 60 * 0.5;
+    }
+    c.x = x; c.y = y; c.active = true;
+    this.wakeNear(x, this.params.cursorRadius);
+  }
+
+  clearCursor() { this.cursor.active = false; this.cursor.vx = 0; this.cursor.vy = 0; }
 
   // ── input ───────────────────────────────────────────────────────────────
   pointerDown(x, y) {
     this._downX = x; this._downY = y; this._moved = 0;
+    this.clearCursor(); // the grab drives motion during a drag, not the field
     let best = -1, bestP = -1, bd = GRAB_RADIUS * GRAB_RADIUS;
     for (const c of this.chains) {
       const i = c.nearest(x, y);
@@ -447,10 +484,7 @@ export class ChainRail {
       this.chains[this.dragChain].drag(x, y);
       return;
     }
-    if (!isDown) {
-      const i = this._chainAtX(x);
-      if (Math.abs(this.chains[i].discX - x) < this.spacing * 1.2) this.activate(i);
-    }
+    if (!isDown) this.setCursor(x, y); // hover: wake + push nearby chains
   }
 
   pointerUp() {
@@ -471,26 +505,33 @@ export class ChainRail {
   update(dt) {
     if (dt > 0) this.fps = this.fps ? this.fps * 0.9 + (1 / dt) * 0.1 : 1 / dt;
 
+    // cursor swipe velocity fades when the mouse stops moving
+    this.cursor.vx *= 0.8; this.cursor.vy *= 0.8;
+
     this._acc += Math.min(dt, 0.05);
     let steps = 0;
     while (this._acc >= FIXED && steps < MAX_STEPS) {
       this.simTime += FIXED;
       for (const i of this.active) {
         const c = this.chains[i];
-        if (c.sleepState === 'awake') c.step(FIXED, this.simTime, this.params);
+        if (c.sleepState === 'awake') c.step(FIXED, this.simTime, this.params, this.cursor);
       }
       this._acc -= FIXED;
       steps++;
     }
     if (steps === MAX_STEPS) this._acc = 0;
 
+    const cur = this.cursor;
     // per-frame: drive chains toward sleep, and finish blends
     const done = [];
     for (const i of this.active) {
       const c = this.chains[i];
       if (c.sleepState === 'awake') {
         if (c.grabbed >= 0) { c.calmFrames = 0; continue; }
-        if (c.energy() < this.params.sleepThreshold) c.calmFrames++; else c.calmFrames = 0;
+        // stay awake & reactive while the hover field is over this chain
+        if (cur.active && Math.abs(c.discX - cur.x) < this.params.cursorRadius) c.calmFrames = 0;
+        else if (c.energy() < this.params.sleepThreshold) c.calmFrames++;
+        else c.calmFrames = 0;
         if (c.calmFrames >= SLEEP_FRAMES) c.beginSettle();
       } else if (c.sleepState === 'settling') {
         if (c.blendStep(dt)) { c.finishSettle(); done.push(i); }
@@ -536,6 +577,13 @@ export class ChainRail {
     if (this.debug) {
       this._rail(ctx);
       for (const c of this.chains) { c.draw(ctx, this.jewelry); c.drawDebug(ctx, this.params.laneWidth); }
+      if (this.cursor.active) {
+        ctx.strokeStyle = 'rgba(255,214,10,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(this.cursor.x, this.cursor.y, this.params.cursorRadius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
       this._hud(ctx);
       return;
     }

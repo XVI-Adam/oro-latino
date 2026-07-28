@@ -6,6 +6,8 @@ const CONTROLS = [
   { key: 'settleSpring',   label: 'settle spring', min: 0,    max: 120,   step: 1,     fmt: (v) => v.toFixed(0) },
   { key: 'sleepThreshold', label: 'sleep thresh',  min: 0.005, max: 0.5,  step: 0.005, fmt: (v) => v.toFixed(3) },
   { key: 'laneWidth',      label: 'lane width',    min: 20,   max: 200,   step: 1,     fmt: (v) => v.toFixed(0) },
+  { key: 'cursorForce',    label: 'cursor push',   min: 0,    max: 4000,  step: 50,    fmt: (v) => v.toFixed(0) },
+  { key: 'cursorRadius',   label: 'cursor radius', min: 40,   max: 320,   step: 5,     fmt: (v) => v.toFixed(0) },
 ];
 
 export function buildChainTuner(params) {

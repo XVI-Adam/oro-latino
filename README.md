@@ -57,6 +57,11 @@ single CSS transform and letterboxed (`js/stage.js`).
      own slot; cross-strand band constraints keep the loop's two strands from
      crossing or scissoring, so a chain can never rest tangled with a neighbor.
 
+  Chains are also **reactive to the mouse**: hovering pushes nearby chains away
+  from the cursor and drags them along the swipe (they part as you sweep
+  through), then the settle/sleep systems glide them back to rest — tunable via
+  the `cursor push` / `cursor radius` sliders.
+
   Tuning target — grab & fling → heavy lively swing → visible decay over ~2–3s →
   glides back into its slot and hangs perfectly still. Verified by a torture
   test (5 chains flung ~875px across each other): fully settled at **3.0s**,

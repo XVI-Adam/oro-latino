@@ -49,6 +49,7 @@ machine.onChange((state) => {
   overlay.update(state);
   hoverId = null;
   canvas.style.cursor = 'default';
+  if (state !== STATES.CASE_FOCUS) chainRail.clearCursor();
   if (state === STATES.GATE_CLOSED) {
     gate.reset(0);
     canvas.style.cursor = 'grab';
@@ -125,6 +126,7 @@ window.addEventListener('pointerup', () => {
 });
 
 canvas.addEventListener('pointerleave', () => {
+  if (isCaseState()) chainRail.clearCursor();
   if (!isGateState()) { hoverId = null; canvas.style.cursor = 'default'; }
 });
 
