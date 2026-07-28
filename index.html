@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Oro Latino — La Ruta</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!-- Letterbox backdrop fills whatever the stage doesn't -->
+  <div id="viewport">
+    <!-- Fixed 1848x1080 design surface, scaled by JS. All layout math lives here. -->
+    <div id="stage">
+      <!-- All visual / physical content -->
+      <canvas id="scene"></canvas>
+
+      <!-- Crisp DOM chrome, positioned in design pixels -->
+      <div id="overlay">
+        <!-- Route index (numbered walkthrough) -->
+        <nav id="route-index" aria-label="Ruta / Route">
+          <ol id="route-list"></ol>
+        </nav>
+
+        <!-- Scene title block: numeral + bilingual label -->
+        <header id="scene-plate">
+          <span id="scene-numeral">00</span>
+          <div id="scene-labels">
+            <span id="scene-label-es" lang="es"></span>
+            <span id="scene-label-en" lang="en"></span>
+          </div>
+        </header>
+
+        <!-- Primary action(s) for the current state -->
+        <div id="action-bar"></div>
+
+        <!-- Vermilion diamond mark from the logo -->
+        <div id="mark" aria-hidden="true"><span class="diamond"></span>Oro Latino</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Debug: jump between states -->
+  <aside id="debug-panel" data-open="true">
+    <div id="debug-head">
+      <strong>DEBUG</strong>
+      <button id="debug-toggle" type="button">–</button>
+    </div>
+    <div id="debug-state">state: <code id="debug-current">—</code></div>
+    <div id="debug-states"></div>
+  </aside>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
