@@ -5,6 +5,8 @@ import { GATE_RECT, SCENES, STATES } from './config.js';
 import { Stage } from './stage.js';
 import { StateMachine } from './state.js';
 import { Gate } from './gate.js';
+import { AssetRegistry } from './assets.js';
+import { Jewelry } from './jewelry.js';
 import { ChainRail } from './chains.js';
 import { Renderer } from './render.js';
 import { Overlay } from './overlay.js';
@@ -19,8 +21,13 @@ const machine = new StateMachine();
 // The signature interaction. Latching fully open advances to the storefront.
 const gate = new Gate({ ...GATE_RECT }, () => machine.go(STATES.STOREFRONT));
 
+// Asset pipeline (empty manifest → all procedural, zero required images) and the
+// procedural jewelry renderer that draws chains, pendants, and ring/bangle art.
+const assets = new AssetRegistry(); // add { manifest: ['link:cuban', ...] } to use PNGs
+const jewelry = new Jewelry(assets, () => stage.dpr);
+
 // The chain case. A quick tap on a chain opens its piece detail.
-const chainRail = new ChainRail(stage, () => machine.go(STATES.PIECE_DETAIL));
+const chainRail = new ChainRail(stage, jewelry, () => machine.go(STATES.PIECE_DETAIL));
 
 // Which interactive box is under the pointer (non-gate scenes).
 let hoverId = null;
@@ -136,4 +143,4 @@ machine.go(STATES.GATE_CLOSED);
 renderer.start();
 
 // Handy for console poking during development.
-window.OroLatino = { stage, machine, gate, chainRail, renderer };
+window.OroLatino = { stage, machine, gate, chainRail, jewelry, assets, renderer };

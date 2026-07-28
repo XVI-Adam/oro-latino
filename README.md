@@ -51,6 +51,18 @@ single CSS transform and letterboxed (`js/stage.js`).
   active set changes; hovering wakes chains. A quick tap opens the piece detail.
   Press **`D`** to toggle the physics debug view (particles, constraints, active
   set, fps). Measured 60fps with a drag live.
+- **Jewelry renderer** (`js/jewelry.js`) — procedural, image-free jewelry via a
+  **sprite-atlas + rotation cache**. Each of the four link styles (rope / box /
+  figaro / Cuban) is pre-rendered at 48 rotations into an offscreen atlas; a
+  chain is drawn by walking its particle path and *stamping* the nearest cached
+  rotation with `drawImage` (never per-link path drawing), with per-gauge
+  thickness as a stamp scale. Four procedural pendants (cross, crucifix,
+  medallion, tablet) and `ring`/`bangle` primitives are cached the same way.
+- **Asset pipeline** (`js/assets.js`) — every element requests a photographic
+  cutout PNG by key (`link:cuban`, `pendant:cross`, …). Only keys in the
+  registry **manifest** are fetched, so the default (empty) manifest means zero
+  network requests and everything renders procedurally; a manifested PNG that
+  404s or fails to decode silently falls back. **Zero required image deps.**
 - **Debug panel** (`js/debug.js`) — jump directly to any state.
 - **`js/config.js`** — the single source of truth: palette, design constants,
   route index, and per-state scene data (the placeholder boxes).

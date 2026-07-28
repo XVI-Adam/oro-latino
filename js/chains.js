@@ -12,6 +12,7 @@
 // only when the active set changes. Hovering near a chain wakes it.
 
 import { DESIGN, PALETTE } from './config.js';
+import { CHAIN_STYLES, PENDANT_TYPES } from './jewelry.js';
 
 // ── tuning ───────────────────────────────────────────────────────────────
 const FIXED = 1 / 60;      // fixed physics timestep (s)
@@ -39,11 +40,15 @@ function mulberry32(seed) {
 
 // ── a single Verlet chain ─────────────────────────────────────────────────
 class Chain {
-  constructor(index, discX, discY, rng) {
+  constructor(index, discX, discY, rng, spec) {
     this.index = index;
     this.discX = discX;
     this.discY = discY;
     this.phase = rng() * Math.PI * 2;      // breeze phase offset
+
+    this.style = spec.style;               // link style: rope/box/figaro/cuban
+    this.gauge = spec.gauge;               // per-chain link thickness
+    this.pendantType = spec.pendantType;   // cross/crucifix/medallion/tablet/null
 
     const N = 16 + Math.floor(rng() * 7);  // 16–22 particles
     this.restLen = 26 + rng() * 12;        // segment length → varied chain drops
@@ -51,9 +56,9 @@ class Chain {
     this.pinL = { x: discX - sep / 2, y: discY };
     this.pinR = { x: discX + sep / 2, y: discY };
 
-    // pendant particle: the lowest point of the drape, given extra mass
+    // pendant particle: the lowest point of the drape; a real pendant weighs more
     this.pendant = Math.floor(N / 2);
-    const pendantMass = 4 + rng() * 3;
+    const pendantMass = spec.pendantType ? 4 + rng() * 3 : 1.6;
 
     this.particles = [];
     const drop = this.restLen * (N - 1) / 2 * 0.96;
@@ -174,42 +179,20 @@ class Chain {
   }
 
   // ── rendering ─────────────────────────────────────────────────────────
-  draw(ctx) {
+  draw(ctx, jewelry) {
     const P = this.particles;
     this._disc(ctx);
+    // stamp the link atlas along the rope path (never draws paths per link)
+    jewelry.strokeChain(ctx, P, this.style, this.gauge);
 
-    // soft cast shadow
-    ctx.save();
-    ctx.translate(3, 5);
-    this._strokeThrough(ctx, P, 8, 'rgba(0,0,0,0.28)');
-    ctx.restore();
-
-    // body → highlight → link gaps (dashed) for a woven-gold read
-    this._strokeThrough(ctx, P, 7.5, PALETTE.goldLo);
-    this._strokeThrough(ctx, P, 5, PALETTE.gold);
-    this._strokeThrough(ctx, P, 2, PALETTE.goldHi);
-    ctx.save();
-    ctx.setLineDash([2, 6]);
-    this._strokeThrough(ctx, P, 5.5, 'rgba(60,40,0,0.5)');
-    ctx.restore();
-
-    this._pendant(ctx, P[this.pendant]);
-  }
-
-  _strokeThrough(ctx, P, width, color) {
-    ctx.beginPath();
-    ctx.moveTo(P[0].x, P[0].y);
-    for (let i = 1; i < P.length - 1; i++) {
-      const mx = (P[i].x + P[i + 1].x) / 2;
-      const my = (P[i].y + P[i + 1].y) / 2;
-      ctx.quadraticCurveTo(P[i].x, P[i].y, mx, my);
+    if (this.pendantType) {
+      const p = P[this.pendant];
+      const a = P[this.pendant - 1];
+      const b = P[this.pendant + 1];
+      // "down" at the bottom of the drape → the pendant hangs and tilts with sway
+      const ang = Math.atan2(p.y - (a.y + b.y) / 2, p.x - (a.x + b.x) / 2);
+      jewelry.stampPendant(ctx, this.pendantType, p.x, p.y, ang, this.gauge);
     }
-    ctx.lineTo(P[P.length - 1].x, P[P.length - 1].y);
-    ctx.lineWidth = width;
-    ctx.strokeStyle = color;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.stroke();
   }
 
   _disc(ctx) {
@@ -227,29 +210,6 @@ class Chain {
     ctx.arc(x, y, 5, 0, Math.PI * 2);
     ctx.fillStyle = '#1a1206';
     ctx.fill();
-  }
-
-  _pendant(ctx, p) {
-    const s = 15;
-    ctx.save();
-    ctx.translate(p.x, p.y + s * 0.7);
-    // gold teardrop
-    ctx.beginPath();
-    ctx.moveTo(0, s);
-    ctx.quadraticCurveTo(s, s * 0.2, 0, -s);
-    ctx.quadraticCurveTo(-s, s * 0.2, 0, s);
-    const g = ctx.createLinearGradient(-s, -s, s, s);
-    g.addColorStop(0, PALETTE.goldHi);
-    g.addColorStop(0.5, PALETTE.gold);
-    g.addColorStop(1, PALETTE.goldLo);
-    ctx.fillStyle = g;
-    ctx.fill();
-    // vermilion gem
-    ctx.beginPath();
-    ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = PALETTE.vermilion;
-    ctx.fill();
-    ctx.restore();
   }
 
   drawDebug(ctx) {
@@ -278,8 +238,9 @@ export class ChainRail {
    * @param {Stage} stage  (for device-pixel ratio when sizing the rest layer)
    * @param {(index:number)=>void} onTap  quick tap on a chain (→ piece detail)
    */
-  constructor(stage, onTap) {
+  constructor(stage, jewelry, onTap) {
     this.stage = stage;
+    this.jewelry = jewelry;
     this.onTap = onTap || (() => {});
     this.debug = false;
     this.railY = 210;
@@ -290,9 +251,16 @@ export class ChainRail {
     this.chains = [];
     const COUNT = 22;
     const x0 = 150, x1 = DESIGN.W - 150;
+    // cycle the four link styles and the pendant set (with a couple bare chains)
+    const pendants = [...PENDANT_TYPES, null, null];
     for (let i = 0; i < COUNT; i++) {
       const x = x0 + (x1 - x0) * (i / (COUNT - 1));
-      this.chains.push(new Chain(i, x, this.railY, rng));
+      const spec = {
+        style: CHAIN_STYLES[i % CHAIN_STYLES.length],
+        gauge: 0.82 + rng() * 0.5,
+        pendantType: pendants[i % pendants.length],
+      };
+      this.chains.push(new Chain(i, x, this.railY, rng, spec));
     }
     this.spacing = (x1 - x0) / (COUNT - 1);
 
@@ -435,7 +403,7 @@ export class ChainRail {
     ctx.clearRect(0, 0, DESIGN.W, DESIGN.H);
     this._rail(ctx);
     for (const c of this.chains) {
-      if (!this.active.has(c.index)) c.draw(ctx);
+      if (!this.active.has(c.index)) c.draw(ctx, this.jewelry);
     }
     this._needsComposite = false;
   }
@@ -445,14 +413,14 @@ export class ChainRail {
 
     if (this.debug) {
       this._rail(ctx);
-      for (const c of this.chains) { c.draw(ctx); c.drawDebug(ctx); }
+      for (const c of this.chains) { c.draw(ctx, this.jewelry); c.drawDebug(ctx); }
       this._hud(ctx);
       return;
     }
 
     if (this._needsComposite) this._recomposite();
     ctx.drawImage(this.layer, 0, 0, DESIGN.W, DESIGN.H); // rest layer (rail + calm chains)
-    for (const i of this.active) this.chains[i].draw(ctx); // live chains on top
+    for (const i of this.active) this.chains[i].draw(ctx, this.jewelry); // live chains on top
   }
 
   _rail(ctx) {
