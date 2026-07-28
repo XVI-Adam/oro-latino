@@ -9,11 +9,12 @@ export class Renderer {
    * @param {StateMachine} machine
    * @param {() => string|null} getHover  id of hovered interactive box, or null
    */
-  constructor(stage, machine, getHover, gate) {
+  constructor(stage, machine, getHover, gate, chainRail) {
     this.stage = stage;
     this.machine = machine;
     this.getHover = getHover;
     this.gate = gate;
+    this.chainRail = chainRail;
     this._raf = null;
     this._last = 0;
     this._loop = this._loop.bind(this);
@@ -26,6 +27,7 @@ export class Renderer {
     const dt = this._last ? (now - this._last) / 1000 : 0;
     this._last = now;
     if (this.gate && this._isGateState()) this.gate.update(dt);
+    if (this.chainRail && this.machine.state === STATES.CASE_FOCUS) this.chainRail.update(dt);
     this.draw(now);
     this._raf = requestAnimationFrame(this._loop);
   }
@@ -43,6 +45,10 @@ export class Renderer {
     if (!scene) return;
 
     this._backdrop(ctx, scene.backdrop);
+
+    if (this.machine.state === STATES.CASE_FOCUS && this.chainRail) {
+      this.chainRail.draw(ctx, now);
+    }
 
     const hover = this.getHover ? this.getHover() : null;
     for (const box of scene.boxes) {

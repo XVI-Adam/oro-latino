@@ -5,6 +5,7 @@ import { GATE_RECT, SCENES, STATES } from './config.js';
 import { Stage } from './stage.js';
 import { StateMachine } from './state.js';
 import { Gate } from './gate.js';
+import { ChainRail } from './chains.js';
 import { Renderer } from './render.js';
 import { Overlay } from './overlay.js';
 import { DebugPanel } from './debug.js';
@@ -18,15 +19,19 @@ const machine = new StateMachine();
 // The signature interaction. Latching fully open advances to the storefront.
 const gate = new Gate({ ...GATE_RECT }, () => machine.go(STATES.STOREFRONT));
 
+// The chain case. A quick tap on a chain opens its piece detail.
+const chainRail = new ChainRail(stage, () => machine.go(STATES.PIECE_DETAIL));
+
 // Which interactive box is under the pointer (non-gate scenes).
 let hoverId = null;
 
-const renderer = new Renderer(stage, machine, () => hoverId, gate);
+const renderer = new Renderer(stage, machine, () => hoverId, gate, chainRail);
 const overlay = new Overlay(machine, handleAction);
 new DebugPanel(machine, (state) => machine.go(state));
 
 const isGateState = () =>
   machine.state === STATES.GATE_CLOSED || machine.state === STATES.GATE_OPENING;
+const isCaseState = () => machine.state === STATES.CASE_FOCUS;
 
 machine.onChange((state) => {
   overlay.update(state);
@@ -70,6 +75,12 @@ canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture?.(e.pointerId);
     return;
   }
+  if (isCaseState()) {
+    e.preventDefault();
+    if (chainRail.pointerDown(x, y)) canvas.style.cursor = 'grabbing';
+    canvas.setPointerCapture?.(e.pointerId);
+    return;
+  }
   const hit = boxAt(x, y);
   if (hit) machine.go(hit.to);
 });
@@ -81,6 +92,11 @@ window.addEventListener('pointermove', (e) => {
     if (gate.dragging) gate.pointerMove(y);
     return;
   }
+  if (isCaseState()) {
+    chainRail.pointerMove(x, y, e.buttons > 0);
+    if (!chainRail.dragging) canvas.style.cursor = 'grab';
+    return;
+  }
   const hit = boxAt(x, y);
   hoverId = hit ? hit.id : null;
   canvas.style.cursor = hit ? 'pointer' : 'default';
@@ -90,6 +106,9 @@ window.addEventListener('pointerup', () => {
   if (isGateState()) {
     gate.pointerUp();
     canvas.style.cursor = gate.opened ? 'default' : 'grab';
+  } else if (isCaseState()) {
+    chainRail.pointerUp();
+    canvas.style.cursor = 'grab';
   }
 });
 
@@ -102,10 +121,14 @@ canvas.addEventListener('wheel', (e) => {
   if (isGateState()) { e.preventDefault(); gate.wheel(e.deltaY); }
 }, { passive: false });
 
-// Keyboard fallback: up-arrow / space nudges it open.
 window.addEventListener('keydown', (e) => {
-  if (!isGateState()) return;
-  if (e.key === 'ArrowUp' || e.key === ' ') { e.preventDefault(); gate.autoOpen(); }
+  // 'D' toggles the chain physics debug view (particles + constraints).
+  if (e.key === 'd' || e.key === 'D') { chainRail.toggleDebug(); return; }
+  // Keyboard fallback for the gate: up-arrow / space nudges it open.
+  if (isGateState() && (e.key === 'ArrowUp' || e.key === ' ')) {
+    e.preventDefault();
+    gate.autoOpen();
+  }
 });
 
 // Kick off in the closed state.
@@ -113,4 +136,4 @@ machine.go(STATES.GATE_CLOSED);
 renderer.start();
 
 // Handy for console poking during development.
-window.OroLatino = { stage, machine, gate, renderer };
+window.OroLatino = { stage, machine, gate, chainRail, renderer };

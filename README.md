@@ -40,6 +40,17 @@ single CSS transform and letterboxed (`js/stage.js`).
   back down and bounces on the sill; cross the tip and it snaps home, latches,
   screen-shakes, and advances to `STOREFRONT`. No images. See the header comment
   in `gate.js` for the model.
+- **The chains** (`js/chains.js`) — the `CASE_FOCUS` scene is a rail of 22
+  draggable gold chains simulated with **Verlet integration**. Each chain is a
+  16–22 particle rope draped over its disc holder (pinned at *both* top ends, so
+  gravity settles it into a natural **catenary**), relaxed 6× per fixed step.
+  Grab anywhere to drag; the tip pendant carries extra mass (inverse-mass
+  constraint weighting) for swing inertia; an idle breeze sways them. Only the
+  touched chain **+ its two neighbors** are simulated — every resting chain is
+  blitted from a pre-composited offscreen layer, recomposited only when the
+  active set changes; hovering wakes chains. A quick tap opens the piece detail.
+  Press **`D`** to toggle the physics debug view (particles, constraints, active
+  set, fps). Measured 60fps with a drag live.
 - **Debug panel** (`js/debug.js`) — jump directly to any state.
 - **`js/config.js`** — the single source of truth: palette, design constants,
   route index, and per-state scene data (the placeholder boxes).

@@ -114,15 +114,12 @@ export const SCENES = {
     actions: [],
   },
 
+  // The chains are Verlet-simulated (chains.js), not placeholder boxes.
   [STATES.CASE_FOCUS]: {
     backdrop: 'felt',
     plate: { num: '02', es: 'Cadenas', en: 'The Chain Case' },
-    boxes: [
-      { id: 'chain1', x: 220,  y: 200, w: 300, h: 680, es: 'Cadena cubana', en: 'Cuban link', to: STATES.PIECE_DETAIL },
-      { id: 'chain2', x: 560,  y: 200, w: 300, h: 680, es: 'Cadena figaro', en: 'Figaro chain', to: STATES.PIECE_DETAIL },
-      { id: 'chain3', x: 900,  y: 200, w: 300, h: 680, es: 'Cadena rope', en: 'Rope chain', to: STATES.PIECE_DETAIL },
-      { id: 'chain4', x: 1240, y: 200, w: 300, h: 680, es: 'Cadena barbada', en: 'Curb chain', to: STATES.PIECE_DETAIL },
-    ],
+    boxes: [],
+    hint: { es: 'Arrastra las cadenas · toca para ver', en: 'Drag the chains · tap to view' },
     actions: [{ label_es: 'Volver', label_en: 'Back', to: STATES.INTERIOR }],
   },
 
