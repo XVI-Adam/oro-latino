@@ -41,16 +41,28 @@ single CSS transform and letterboxed (`js/stage.js`).
   screen-shakes, and advances to `STOREFRONT`. No images. See the header comment
   in `gate.js` for the model.
 - **The chains** (`js/chains.js`) — the `CASE_FOCUS` scene is a rail of 22
-  draggable gold chains simulated with **Verlet integration**. Each chain is a
-  16–22 particle rope draped over its disc holder (pinned at *both* top ends, so
-  gravity settles it into a natural **catenary**), relaxed 6× per fixed step.
-  Grab anywhere to drag; the tip pendant carries extra mass (inverse-mass
-  constraint weighting) for swing inertia; an idle breeze sways them. Only the
-  touched chain **+ its two neighbors** are simulated — every resting chain is
-  blitted from a pre-composited offscreen layer, recomposited only when the
-  active set changes; hovering wakes chains. A quick tap opens the piece detail.
-  Press **`D`** to toggle the physics debug view (particles, constraints, active
-  set, fps). Measured 60fps with a drag live.
+  draggable gold chains simulated with **Verlet integration** (16–22 particles,
+  pinned at both top ends, 6 relaxation iterations, heavy tip pendant via
+  inverse-mass weighting). Grab anywhere to drag; a quick tap opens the piece
+  detail. Four systems guarantee a clean return to rest after any interaction:
+  1. **Baked rest pose** — at load each chain converges under gravity only; the
+     result is the ground-truth "settled" pose (a clean vertical hang).
+  2. **Settle assist** — off the drag, a weak spring pulls each particle toward
+     its rest pose, gated by kinetic energy (≈0 while swinging hard, ramping up
+     as it slows) atop linear damping + quadratic air drag.
+  3. **Sleep / wake** — after ~30 calm frames a chain eases to rest over 300ms,
+     sleeps, and is baked into the pre-composited background; proximity wakes it
+     and its two neighbors. Only awake/settling chains simulate & draw live.
+  4. **Lane + loop integrity** — a soft horizontal lane keeps each chain in its
+     own slot; cross-strand band constraints keep the loop's two strands from
+     crossing or scissoring, so a chain can never rest tangled with a neighbor.
+
+  Tuning target — grab & fling → heavy lively swing → visible decay over ~2–3s →
+  glides back into its slot and hangs perfectly still. Verified by a torture
+  test (5 chains flung ~875px across each other): fully settled at **3.0s**,
+  **0px** deviation from first load. Press **`D`** for the debug view (particles,
+  constraints, cross-strand + lane overlays, fps) with live sliders for damping,
+  settle-spring strength, sleep threshold, and lane width.
 - **Jewelry renderer** (`js/jewelry.js`) — procedural, image-free jewelry via a
   **sprite-atlas + rotation cache**. Each of the four link styles (rope / box /
   figaro / Cuban) is pre-rendered at 48 rotations into an offscreen atlas; a

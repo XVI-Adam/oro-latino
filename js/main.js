@@ -8,6 +8,7 @@ import { Gate } from './gate.js';
 import { AssetRegistry } from './assets.js';
 import { Jewelry } from './jewelry.js';
 import { ChainRail } from './chains.js';
+import { buildChainTuner } from './chaintuner.js';
 import { Renderer } from './render.js';
 import { Overlay } from './overlay.js';
 import { DebugPanel } from './debug.js';
@@ -28,6 +29,10 @@ const jewelry = new Jewelry(assets, () => stage.dpr);
 
 // The chain case. A quick tap on a chain opens its piece detail.
 const chainRail = new ChainRail(stage, jewelry, () => machine.go(STATES.PIECE_DETAIL));
+
+// Live sliders for the chain physics — visible while the 'D' debug view is on.
+const chainTuner = buildChainTuner(chainRail.params);
+chainTuner.hide();
 
 // Which interactive box is under the pointer (non-gate scenes).
 let hoverId = null;
@@ -129,8 +134,12 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 window.addEventListener('keydown', (e) => {
-  // 'D' toggles the chain physics debug view (particles + constraints).
-  if (e.key === 'd' || e.key === 'D') { chainRail.toggleDebug(); return; }
+  // 'D' toggles the chain physics debug view (particles + constraints) + sliders.
+  if (e.key === 'd' || e.key === 'D') {
+    chainRail.toggleDebug();
+    if (chainRail.debug) chainTuner.show(); else chainTuner.hide();
+    return;
+  }
   // Keyboard fallback for the gate: up-arrow / space nudges it open.
   if (isGateState() && (e.key === 'ArrowUp' || e.key === ' ')) {
     e.preventDefault();
