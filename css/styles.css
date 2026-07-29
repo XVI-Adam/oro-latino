@@ -688,6 +688,18 @@ body.is-coarse .pc-btn--sms { padding: 18px 20px; }
 body.is-coarse .pc-close { width: 42px; height: 42px; font-size: 24px; }
 body.is-coarse .route-stop { padding: 6px 0; }
 
+#perf-hud {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(212, 175, 55, 0.25);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ph-row { display: flex; justify-content: space-between; gap: 10px; }
+.ph-row span { opacity: 0.65; }
+.ph-row b { color: var(--gold-hi); font-weight: 600; }
+.ph-row.is-warn b { color: var(--vermilion); }
+
 /* ── Chain physics tuner ─────────────────────────────────────────────────── */
 #chain-tuner {
   position: fixed;

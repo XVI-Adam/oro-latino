@@ -11,7 +11,11 @@
 // cutout by key and, absent one, draws its procedural version — so the page has
 // zero required image dependencies.
 
-import { LinkAtlas, STYLES, VARIANTS, visualMM, PX_PER_MM, LIGHT_ANGLE } from './links.js';
+import { LinkAtlas, RunAtlas, STYLES, VARIANTS, visualMM, PX_PER_MM, LIGHT_ANGLE,
+         BASE_MM, RUN_LINKS, MAX_LINKS_PER_CHAIN, supersampleFor } from './links.js';
+import { perf } from './perf.js';
+
+const BASE_MM_PX = 8 * PX_PER_MM;
 
 const PI2 = Math.PI * 2;
 
@@ -50,19 +54,31 @@ export class Jewelry {
     this.reg = registry;
     this.getDpr = getDpr;
     this.dpr = getDpr();
-    this.links = new Map();    // variant → RotationCache
+    this.links = new Map();    // variant@tier → LinkAtlas
+    this.runs = new Map();     // style@tier  → RunAtlas
+    this.runQuality = 1;
     this.pendants = new Map(); // type → { canvas, w, h }
     this._subscribed = new Set();
   }
 
-  _checkDpr() {
-    const d = this.getDpr();
-    if (d !== this.dpr) { this.dpr = d; this.links.clear(); this.pendants.clear(); }
+  /** Every live sprite surface, for the memory budget check. */
+  atlasSurfaces() {
+    const out = [];
+    for (const a of this.links.values()) out.push(a.canvas);
+    for (const r of this.runs.values()) out.push(r.canvas);
+    for (const p of this.pendants.values()) out.push(p.canvas);
+    return out;
   }
 
-  _link(variant) {
-    let rc = this.links.get(variant);
-    if (!rc) { rc = new LinkAtlas(variant, this.dpr); this.links.set(variant, rc); }
+  _checkDpr() {
+    const d = this.getDpr();
+    if (d !== this.dpr) { this.dpr = d; this.links.clear(); this.runs.clear(); this.pendants.clear(); }
+  }
+
+  _link(variant, tier = 2) {
+    const key = `${variant}@${tier}`;
+    let rc = this.links.get(key);
+    if (!rc) { rc = new LinkAtlas(variant, tier); this.links.set(key, rc); }
     return rc;
   }
 
@@ -81,6 +97,13 @@ export class Jewelry {
   _layout(P, layout, mm) {
     const n = P.length;
     if (n < 2) return [];
+    // Cap the link count: a 2.5mm rope over a 1100px path would otherwise want
+    // ~1000 links. Stretch the pitch instead — at this gauge nobody can count.
+    let pathLen = 0;
+    for (let i = 0; i < n - 1; i++) pathLen += Math.hypot(P[i+1].x - P[i].x, P[i+1].y - P[i].y);
+    const nominalPitch = layout.seq(0).pitch * mm * PX_PER_MM;
+    const wanted = pathLen / Math.max(nominalPitch, 0.01);
+    const stretch = wanted > MAX_LINKS_PER_CHAIN ? wanted / MAX_LINKS_PER_CHAIN : 1;
 
     // per-segment direction and length
     const segA = new Array(n - 1), segL = new Array(n - 1);
@@ -93,7 +116,7 @@ export class Jewelry {
 
     const out = [];
     let idx = 0;
-    const mmPx = mm * PX_PER_MM;               // gauge in pixels
+    const mmPx = mm * PX_PER_MM * stretch;     // gauge in pixels, pitch-capped
     let need = layout.seq(0).pitch * mmPx * 0.5;
     for (let s = 0; s < n - 1; s++) {
       const ax = P[s].x, ay = P[s].y;
@@ -120,7 +143,8 @@ export class Jewelry {
         out.push({
           v: link.v, edge: !!link.edge, i: idx,
           x: ax + dx * f, y: ay + dy * f,
-          a: a + link.ang,
+          a: a + link.ang,   // drawing angle: tangent + the variant's own twist
+          pa: a,             // path tangent alone — what run grouping must test
           squeeze,
         });
         idx++;
@@ -141,45 +165,110 @@ export class Jewelry {
    * rings are laid over them, then the edge-on links are re-stamped through a
    * narrow clip so their shanks read as passing *through* the rings.
    */
-  strokeChain(ctx, P, style, mm = 4, depth = 1) {
+  /** Baked run-strip for a style, at the supersample tier its gauge deserves. */
+  _run(style, mm, count = RUN_LINKS) {
+    const tier = supersampleFor(mm);
+    const key = `${style}@${tier}x${count}`;
+    let r = this.runs.get(key);
+    if (!r) {
+      const layout = STYLES[style];
+      // The strip is built with the same three-pass interlock the single-link
+      // path used — but ONCE, at bake time, so the clip never costs a frame.
+      const build = (c, x0, ss) => {
+        const gaugePx = BASE_MM_PX * ss;
+        const pos = [];
+        let x = x0;
+        for (let i = 0; i < count; i++) {
+          const seq = layout.seq(i);
+          x += seq.pitch * gaugePx;
+          pos.push({ seq, x: x - seq.pitch * gaugePx * 0.5 });
+        }
+        const drawOne = (seq, px) => {
+          const a = this._link(seq.v, tier);
+          const src = a.diag, dst = a.designSize * ss;
+          const b = Math.round((((seq.ang % PI2) + PI2) % PI2) / PI2 * a.rotSteps) % a.rotSteps;
+          const col = b % a.cols, row = (b / a.cols) | 0;
+          c.drawImage(a.canvas, col * src, row * src, src, src, px - dst / 2, -dst / 2, dst, dst);
+        };
+        for (const p of pos) if (p.seq.edge) drawOne(p.seq, p.x);
+        for (const p of pos) if (!p.seq.edge) drawOne(p.seq, p.x);
+        // threading sliver, baked in
+        for (const p of pos) {
+          if (!p.seq.edge) continue;
+          const band = gaugePx * 0.30;
+          c.save();
+          c.beginPath();
+          c.rect(p.x - band, -band * 2.2, band * 2, band * 4.4);
+          c.clip();
+          drawOne(p.seq, p.x);
+          c.restore();
+        }
+      };
+      r = new RunAtlas(style, tier, build, count);
+      this.runs.set(key, r);
+    }
+    return r;
+  }
+
+  /**
+   * Draw a chain. The frame loop here is deliberately nothing but drawImage:
+   * no gradients, no clips, no per-link save/restore — all of that is baked.
+   *
+   * Straight stretches stamp one RUN sprite per 8 links; only the tail and
+   * genuinely curved stretches fall back to individual links, where a strip
+   * would visibly bend the wrong way.
+   */
+  strokeChain(ctx, P, style, mm = 4, depth = 1, cull = null) {
     this._checkDpr();
     const layout = STYLES[style] || STYLES.rope;
-    const g = visualMM(mm) * depth;   // `depth` shrinks distant depictions only
+    const g = visualMM(mm) * depth;
     const links = this._layout(P, layout, g);
     if (!links.length) return;
 
-    // soft cast shadow + a dark cord so the chain reads as one object
-    ctx.save();
-    ctx.translate(2, 4);
     this._core(ctx, P, g * PX_PER_MM * 0.85, 'rgba(0,0,0,0.22)');
-    ctx.restore();
     this._core(ctx, P, g * PX_PER_MM * 0.34, 'rgba(52,34,4,0.9)');
 
-    // pass 1 — edge-on links (they sit behind)
-    for (const L of links) {
-      if (!L.edge) continue;
-      this._link(L.v).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
-    }
-    // pass 2 — face-on rings over them
-    for (const L of links) {
-      if (L.edge) continue;
-      this._link(L.v).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
-    }
-    // pass 3 — the threading sliver: re-stamp each edge-on link clipped to a
-    // band across the chain, so it visibly passes through the ring it links.
-    const band = g * PX_PER_MM * 0.30;
-    for (const L of links) {
-      if (!L.edge) continue;
-      ctx.save();
-      ctx.translate(L.x, L.y);
-      ctx.rotate(L.a);
-      ctx.beginPath();
-      ctx.rect(-band, -band * 2.2, band * 2, band * 4.4);
-      ctx.clip();
-      ctx.rotate(-L.a);
-      ctx.translate(-L.x, -L.y);
-      this._link(L.v).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
-      ctx.restore();
+    const runLong = this._run(style, g, RUN_LINKS);
+    const period = layout.period || 2;
+    // A short strip fits a gentler curve than a long one, so try 8 then 4.
+    const shortLen = (RUN_LINKS % 2 === 0 && period <= 4) ? RUN_LINKS / 2 : 0;
+    const runShort = shortLen ? this._run(style, g, shortLen) : null;
+    const scale = (g / BASE_MM) * (this.runQuality || 1);
+    // The run atlas quantises to 16 steps (22.5deg). Stamping at the window's
+    // average angle means the worst per-link error is ANG_TOL/2, so anything
+    // below ~0.5 rad adds no error beyond the quantisation already present.
+    const ANG_TOL = 0.50;
+
+    const fits = (i, len, tol) => {
+      if (i + len > links.length || i % period !== 0) return false;
+      let minA = Infinity, maxA = -Infinity;
+      for (let k = i; k < i + len; k++) {
+        if (links[k].squeeze < 0.86) return false;   // matches the plain-stamp cutoff
+        if (links[k].pa < minA) minA = links[k].pa;
+        if (links[k].pa > maxA) maxA = links[k].pa;
+      }
+      return maxA - minA <= tol;
+    };
+    const stampRun = (atlas, i, len) => {
+      const a = links[i], b = links[i + len - 1];
+      const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+      if (cull && (cx < cull.x0 || cx > cull.x1 || cy < cull.y0 || cy > cull.y1)) return;
+      atlas.stamp(ctx, cx, cy, Math.atan2(b.y - a.y, b.x - a.x), scale);
+      perf.runs++;
+    };
+
+    let i = 0;
+    while (i < links.length) {
+      if (fits(i, RUN_LINKS, ANG_TOL)) { stampRun(runLong, i, RUN_LINKS); i += RUN_LINKS; continue; }
+      if (runShort && fits(i, shortLen, ANG_TOL * 1.5)) {
+        stampRun(runShort, i, shortLen); i += shortLen; continue;
+      }
+      const L = links[i];
+      if (!cull || (L.x > cull.x0 && L.x < cull.x1 && L.y > cull.y0 && L.y < cull.y1)) {
+        this._link(L.v, supersampleFor(g)).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+        perf.links++;
+      }
+      i++;
     }
   }
 
@@ -204,7 +293,7 @@ export class Jewelry {
       const facing = 0.55 + 0.45 * Math.cos(L.a - LIGHT_ANGLE);
       const fall = 1 - d / (span + 1);
       ctx.globalAlpha = Math.max(0, fall * fall * facing * 0.5 * strength);
-      this._link(L.v).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+      this._link(L.v, supersampleFor(g)).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
     }
     ctx.restore();
   }
@@ -214,32 +303,49 @@ export class Jewelry {
     return this._layout(P, STYLES[style] || STYLES.rope, visualMM(mm) * depth);
   }
 
-  /** A small 4-point star catching the light. */
-  sparkle(ctx, x, y, r, alpha = 1) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.globalCompositeOperation = 'lighter';
-    const core = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
-    core.addColorStop(0, `rgba(255,250,232,${0.95 * alpha})`);
-    core.addColorStop(0.35, `rgba(255,232,170,${0.35 * alpha})`);
+  /**
+   * The sparkle, rendered once. Glints stamp this — they never build a
+   * gradient or a path at frame time, and never ask a chain to re-simulate.
+   */
+  sparkleSprite() {
+    if (this._spark) return this._spark;
+    const R = 48;
+    const c = document.createElement('canvas');
+    c.width = c.height = R * 2;
+    const g2 = c.getContext('2d');
+    g2.translate(R, R);
+    const core = g2.createRadialGradient(0, 0, 0, 0, 0, R * 0.42);
+    core.addColorStop(0, 'rgba(255,250,232,1)');
+    core.addColorStop(0.35, 'rgba(255,232,170,0.34)');
     core.addColorStop(1, 'rgba(255,232,170,0)');
-    ctx.fillStyle = core;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, PI2);
-    ctx.fill();
-    ctx.fillStyle = `rgba(255,250,232,${0.85 * alpha})`;
-    ctx.beginPath();
+    g2.fillStyle = core;
+    g2.fillRect(-R, -R, R * 2, R * 2);
+    g2.fillStyle = 'rgba(255,250,232,0.9)';
+    g2.beginPath();
     for (let k = 0; k < 4; k++) {
       const a = (k / 4) * PI2;
-      const long = r * (k % 2 === 0 ? 2.5 : 1.6);
-      ctx.moveTo(0, 0);
-      ctx.lineTo(Math.cos(a - 0.10) * r * 0.28, Math.sin(a - 0.10) * r * 0.28);
-      ctx.lineTo(Math.cos(a) * long, Math.sin(a) * long);
-      ctx.lineTo(Math.cos(a + 0.10) * r * 0.28, Math.sin(a + 0.10) * r * 0.28);
+      const long = R * (k % 2 === 0 ? 0.95 : 0.6);
+      g2.moveTo(0, 0);
+      g2.lineTo(Math.cos(a - 0.10) * R * 0.12, Math.sin(a - 0.10) * R * 0.12);
+      g2.lineTo(Math.cos(a) * long, Math.sin(a) * long);
+      g2.lineTo(Math.cos(a + 0.10) * R * 0.12, Math.sin(a + 0.10) * R * 0.12);
     }
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
+    g2.closePath();
+    g2.fill();
+    this._spark = c;
+    return c;
+  }
+
+  /** Two plain drawImages: the star, and a soft bloom on the metal under it. */
+  sparkle(ctx, x, y, r, alpha = 1) {
+    const sp = this.sparkleSprite();
+    const d = r * 3.2;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(sp, x - d / 2, y - d / 2, d, d);
+    const b = d * 1.7;
+    ctx.globalAlpha = alpha * 0.30;
+    ctx.drawImage(sp, x - b / 2, y - b / 2, b, b);
+    ctx.globalAlpha = 1;
   }
 
   _core(ctx, P, width, color) {
@@ -291,19 +397,23 @@ export class Jewelry {
    * fast-falloff pool right at the contact point (not a soft drop shadow).
    */
   ao(ctx, x, y, rx, ry, strength = 0.55) {
-    const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
-    g.addColorStop(0, `rgba(0,0,0,${strength})`);
-    g.addColorStop(0.45, `rgba(0,0,0,${strength * 0.42})`);
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(1, ry / Math.max(rx, ry));
-    ctx.translate(-x, -y);
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, y, Math.max(rx, ry), 0, PI2);
-    ctx.fill();
-    ctx.restore();
+    // one cached sprite, stretched — no gradient is built at frame time
+    if (!this._ao) {
+      const R = 32;
+      const c = document.createElement('canvas');
+      c.width = c.height = R * 2;
+      const g2 = c.getContext('2d');
+      const g = g2.createRadialGradient(R, R, 0, R, R, R);
+      g.addColorStop(0, 'rgba(0,0,0,1)');
+      g.addColorStop(0.45, 'rgba(0,0,0,0.42)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      g2.fillStyle = g;
+      g2.fillRect(0, 0, R * 2, R * 2);
+      this._ao = c;
+    }
+    ctx.globalAlpha = strength;
+    ctx.drawImage(this._ao, x - rx, y - ry, rx * 2, ry * 2);
+    ctx.globalAlpha = 1;
   }
 
   // ── ring & bangle primitives (for later cases) ──────────────────────────

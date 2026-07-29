@@ -3,6 +3,7 @@
 
 import { DESIGN, PALETTE, SCENES, STATES } from './config.js';
 import { Camera } from './camera.js';
+import { perf } from './perf.js';
 
 export class Renderer {
   /**
@@ -68,6 +69,7 @@ export class Renderer {
       this.onCamera(this.camera.active ? Math.min(1, this.camera.u * 3) : 0);
     }
     this.draw(now);
+    perf.frame(now);
     this._raf = requestAnimationFrame(this._loop);
   }
 

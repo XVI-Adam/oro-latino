@@ -20,10 +20,12 @@
 import { DESIGN, PALETTE } from './config.js';
 import { CHAIN_STYLES, PENDANT_TYPES } from './jewelry.js';
 import { LIGHT_ANGLE } from './links.js';
+import { perf } from './perf.js';
 
 // ── tuning (defaults; damping/settleSpring/sleepThreshold/laneWidth are live) ─
 const FIXED = 1 / 60;      // fixed physics timestep (s)
-const MAX_STEPS = 5;       // catch-up cap (avoids the spiral of death)
+const MAX_STEPS = 2;       // catch-up cap — a slow frame must not buy itself
+                           // more work and spiral (this was 5, and it did)
 const GRAVITY = 2100;      // px/s²
 const ITER = 6;            // constraint relaxation iterations
 const AIR = 0.045;         // quadratic air-drag coefficient (big swings bleed fast)
@@ -410,7 +412,7 @@ class Chain {
     const P = this.particles;
     this._contactShadow(ctx);
     this._disc(ctx);
-    jewelry.strokeChain(ctx, P, this.style, this.gauge, this.mmScale);
+    jewelry.strokeChain(ctx, P, this.style, this.gauge, this.mmScale, this.cull);
     if (this.pendantType) {
       const p = P[this.pendant];
       const a = P[this.pendant - 1], b = P[this.pendant + 1];
@@ -419,7 +421,9 @@ class Chain {
       jewelry.ao(ctx, p.x, p.y + 16 * this.sizeK, 20 * this.sizeK, 8 * this.sizeK, 0.5);
       jewelry.stampPendant(ctx, this.pendantType, p.x, p.y, ang, this.sizeK);
     }
+    perf.begin('tagDraw');
     this._drawTag(ctx);
+    perf.end('tagDraw');
   }
 
   /** Small white price tag swinging on its string. */
@@ -516,20 +520,29 @@ class Chain {
   }
 
   _disc(ctx) {
+    // cached sprite — this was building a radial gradient every frame, per chain
+    if (!Chain._discSprite) {
+      const R = 32, c = document.createElement('canvas');
+      c.width = c.height = R * 2;
+      const g2 = c.getContext('2d');
+      g2.translate(R, R);
+      g2.beginPath();
+      g2.arc(0, 0, 13, 0, Math.PI * 2);
+      const g = g2.createRadialGradient(-4, -4, 2, 0, 0, 14);
+      g.addColorStop(0, PALETTE.goldHi);
+      g.addColorStop(1, PALETTE.goldLo);
+      g2.fillStyle = g;
+      g2.fill();
+      g2.beginPath();
+      g2.arc(0, 0, 5, 0, Math.PI * 2);
+      g2.fillStyle = '#1a1206';
+      g2.fill();
+      Chain._discSprite = c;
+    }
     const { discX: x, discY: y } = this;
     ctx.fillStyle = '#0c0c0d';
-    ctx.fillRect(x - 3, y - 26, 6, 20); // hook stem into the rail
-    ctx.beginPath();
-    ctx.arc(x, y, 13, 0, Math.PI * 2);
-    const g = ctx.createRadialGradient(x - 4, y - 4, 2, x, y, 14);
-    g.addColorStop(0, PALETTE.goldHi);
-    g.addColorStop(1, PALETTE.goldLo);
-    ctx.fillStyle = g;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
-    ctx.fillStyle = '#1a1206';
-    ctx.fill();
+    ctx.fillRect(x - 3, y - 26, 6, 20);   // hook stem into the rail
+    ctx.drawImage(Chain._discSprite, x - 32, y - 32, 64, 64);
   }
 
   drawDebug(ctx, laneWidth) {
@@ -598,6 +611,10 @@ export class ChainRail {
     this.tagSlop = coarsePointer ? 1.9 : 1;
     this.iterations = quality < 0.7 ? 4 : ITER;
     this.keyFocus = -1;
+    this.degradeLevel = 0;
+    this.glintRate = 1;
+    this.simTouchedOnly = false;
+    this.cull = null;
 
     const rng = mulberry32(seed); // deterministic layout every load
     this.chains = [];
@@ -776,6 +793,7 @@ export class ChainRail {
   // ── simulation + sleep/wake bookkeeping ─────────────────────────────────
   update(dt) {
     if (dt > 0) this.fps = this.fps ? this.fps * 0.9 + (1 / dt) * 0.1 : 1 / dt;
+    this._degrade(dt * 1000);
 
     // Reduced motion: no swinging at all. Chains stay in their baked rest pose
     // and scenes change by crossfade, so nothing moves that wasn't asked for.
@@ -816,13 +834,17 @@ export class ChainRail {
       }
     }
 
+    perf.begin('glints');
     this._stepGlints(dt);
+    perf.end('glints');
 
+    perf.begin('physics');
     this._acc += Math.min(dt, 0.05);
     let steps = 0;
     while (this._acc >= FIXED && steps < MAX_STEPS) {
       this.simTime += FIXED;
       for (const i of this.active) {
+        if (this.simTouchedOnly && i !== this.dragChain) continue;
         const c = this.chains[i];
         if (c.sleepState === 'awake') c.step(FIXED, this.simTime, this.params, this.cursor, this.iterations);
       }
@@ -830,6 +852,7 @@ export class ChainRail {
       steps++;
     }
     if (steps === MAX_STEPS) this._acc = 0;
+    perf.end('physics');
 
     const cur = this.cursor;
     // per-frame: drive chains toward sleep, and finish blends
@@ -861,8 +884,8 @@ export class ChainRail {
     for (const c of this.chains) {
       c.glintIn = (c.glintIn ?? (4 + Math.random() * 5)) - dt;
       if (c.glintIn > 0) continue;
-      c.glintIn = 4 + Math.random() * 5;
-      if (this.glints.length < 5) this._spawnGlint(c.index);
+      c.glintIn = (4 + Math.random() * 5) / Math.max(0.05, this.glintRate);
+      if (this.glints.length < 5 && Math.random() < this.glintRate) this._spawnGlint(c.index);
     }
   }
 
@@ -912,18 +935,40 @@ export class ChainRail {
     }
   }
 
+  /**
+   * Glints live on top of the composited background. A glint never wakes a
+   * chain, never re-stamps its links and never re-bakes the composite — it is
+   * a cached sprite at a point precomputed when it spawned.
+   */
   _drawGlints(ctx) {
+    if (!this.glints.length) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
     for (const g of this.glints) {
-      const c = this.chains[g.i];
-      if (!c) continue;
-      // fade in and out so nothing pops
       const strength = Math.sin(Math.PI * g.t);
-      this.jewelry.glintChain(ctx, c.particles, c.style, c.gauge,
-        g.link, g.span, strength, c.mmScale);
-      // the star rides the link it was born on
-      const links = c.particles;
       this.jewelry.sparkle(ctx, g.x, g.y, g.r * (0.6 + 0.4 * strength), strength * 0.9);
     }
+    ctx.restore();
+  }
+
+  /**
+   * Sustained-load ladder. Never touches interlocking or the specular hotspot —
+   * those carry the realism; everything else is negotiable.
+   *   1 glint rate → 2 constraint iterations → 3 atlas tier → 4 sim only what's touched
+   */
+  _degrade(frameMs) {
+    const slow = frameMs > 20;
+    if (slow) this._slowFrames = (this._slowFrames || 0) + 1;
+    else this._slowFrames = Math.max(0, (this._slowFrames || 0) - 2);
+    const lvl = this._slowFrames > 90 ? 4 : this._slowFrames > 60 ? 3
+              : this._slowFrames > 30 ? 2 : this._slowFrames > 12 ? 1 : 0;
+    if (lvl === this.degradeLevel) return;
+    this.degradeLevel = lvl;
+    this.glintRate = lvl >= 1 ? 0.25 : 1;
+    this.iterations = lvl >= 2 ? 4 : (this.quality < 0.7 ? 4 : ITER);
+    this.jewelry.runQuality = lvl >= 3 ? 0.85 : 1;
+    this.simTouchedOnly = lvl >= 4;
+    if (lvl > 0) console.info(`[perf] degrade level ${lvl} (${this._slowFrames} slow frames)`);
   }
 
   /** Chains currently in motion (awake or settling). */
@@ -957,8 +1002,18 @@ export class ChainRail {
     this._needsComposite = false;
   }
 
+  /** Visible design-space rect (accounts for the portrait crop and zoom). */
+  _updateCull() {
+    const f = this.stage.frame || { x: 0, y: 0, w: DESIGN.W, h: DESIGN.H };
+    const pad = 90;
+    const r = { x0: f.x - pad, y0: f.y - pad, x1: f.x + f.w + pad, y1: f.y + f.h + pad };
+    this.cull = r;
+    for (const c of this.chains) c.cull = r;
+  }
+
   draw(ctx, now) {
     this._ensureLayer();
+    this._updateCull();
 
     if (this.debug) {
       this._rail(ctx);
@@ -974,13 +1029,20 @@ export class ChainRail {
       return;
     }
 
+    perf.begin('composite');
     if (this._needsComposite) this._recomposite();
     ctx.drawImage(this.layer, 0, 0, DESIGN.W, DESIGN.H); // sleeping chains (static)
+    perf.end('composite');
+    perf.begin('chainDraw');
     for (const i of this.active) {
       if (i === this.focusIndex) continue;              // drawn lifted, on top
       this.chains[i].draw(ctx, this.jewelry);
     }
+    perf.awake = this.active.size;
+    perf.end('chainDraw');
+    perf.begin('glints');
     this._drawGlints(ctx);
+    perf.end('glints');
     if (this.hoverTag >= 0 && this.hoverTag !== this.focusIndex) {
       this.chains[this.hoverTag]._drawTag(ctx, true);   // highlight under cursor
     }

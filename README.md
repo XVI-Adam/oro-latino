@@ -174,6 +174,56 @@ exactly); route **numerals flip** on scene change; and optional procedural
 Loading is instant because everything is drawn, not fetched. Photo cutouts are
 lazy-swapped in as they arrive (see the asset pipeline above).
 
+### Perf HUD
+
+The debug panel (`D`) carries a live HUD — fps, ms per subsystem (physics /
+chains / tags / composite / glints), drawImage calls this frame, awake-chain
+count and atlas MB against a 64MB budget, which warns to the console if
+exceeded. It is always on: every optimisation below was justified by one of
+these numbers moving.
+
+### The 5fps regression, diagnosed
+
+Instrumenting first found three compounding causes, none of them the shading:
+
+| | before | after |
+|---|---|---|
+| links in the case | **6,053** (one 3mm rope had **1,005**) | 5,133, capped at 420/chain |
+| stamps per frame, all awake | 18,159 (3 interlock passes) | ~2,000 |
+| per-link `save`/`clip`/`restore` | 6,053 | 0 — baked into the run sprite |
+| composite re-bake | **11.2ms**, re-fired on every wake/sleep | 3.7ms |
+| physics catch-up | up to 5 substeps — a slow frame bought more work | 2 |
+
+The fixes, in order of payoff:
+
+- **Run sprites** (`RunAtlas`). 8 already-interlocked, already-shaded links baked
+  as one sprite per rotation step, in 8- and 4-link tiers. Straight stretches
+  stamp one sprite; only real bends and the tail fall back to single links.
+  The three-pass interlock — including the threading clip — now happens once at
+  bake time instead of per link per frame.
+- **Zero frame-time state churn**: sparkle, ambient-occlusion and disc-holder
+  gradients are all cached sprites now; the curvature transform only engages
+  below squeeze 0.86.
+- **Glints never wake a chain.** A glint is a cached sparkle sprite stamped at a
+  point precomputed when it spawned, drawn additively over the composited
+  background. At idle: awake = 0, one background `drawImage`.
+- **Cull + decouple**: viewport culling by design-space rect, 2-substep cap, and
+  a degradation ladder (glint rate → constraint iterations → atlas tier → sim
+  only the touched chain) that never touches interlocking or the specular.
+
+Measured after (this machine, 14 chains, dpr capped at 2):
+
+| condition | ms/frame | drawImage |
+|---|---|---|
+| idle, all asleep | 0.18 | **1** |
+| idle + glints (awake = 0) | 0.14 | 10 |
+| 3 chains awake | 2.73 | 441 |
+| 3 chains + neighbours (5 awake) | 8.75 | 936 |
+| all 14 awake | 18.8 | 1,955 |
+
+Live HUD in the case: **60fps, atlas 4.1MB / 64MB**. Torture test unchanged —
+762px chaos settles in 3.8s to 0px, 14/14 asleep.
+
 ### Per-frame canvas op audit
 
 Measured by instrumenting the 2D context and counting calls in one steady frame:

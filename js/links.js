@@ -18,8 +18,17 @@ export const PX_PER_MM = 1.5;          // one conversion for the whole system
                                        // (a 60cm chain hangs ~550px, so this is
                                        //  life-size x1.6 — uniform, ratios intact)
 export const BASE_MM = 8;              // every sprite is authored at this size
-export const N_ROT = 32;               // rotation steps (>= 24 keeps it smooth)
-export const SUPERSAMPLE = 2;          // atlas rendered at 2x, minimum
+export const N_ROT = 16;               // rotation steps for the link atlas
+export const N_RUN_ROT = 16;           // rotation steps for run strips
+export const RUN_LINKS = 8;            // links baked into one run sprite
+// A pathology guard, NOT a quality lever. Run sprites already collapse 8 links
+// into one stamp, so a dense chain is cheap; capping hard enough to matter
+// visibly spreads the links apart and exposes the cord between them.
+export const MAX_LINKS_PER_CHAIN = 420;
+export const ATLAS_BUDGET_MB = 64;
+
+/** Thin chains don't need 2x source; heavy ones do. */
+export function supersampleFor(mm) { return mm >= 6 ? 2 : 1.25; }
 
 // Light comes from the upper-left, matching the interior's track spots.
 export const LIGHT_ANGLE = -Math.PI * 0.72;
@@ -136,25 +145,25 @@ export const VARIANTS = {
 // Cuban sits at 0.70 → each fat oval overlaps its neighbour by ~30%.
 export const STYLES = {
   cuban: {
-    mm: [6, 12],
+    mm: [6, 12], period: 2,
     seq: (i) => (i % 2 === 0
       ? { v: 'cubanFace', pitch: 0.567, ang: 0, edge: false }   // ~30% overlap
       : { v: 'cubanEdge', pitch: 0.567, ang: 0, edge: true }),
   },
   rope: {
-    mm: [2.5, 4],
+    mm: [2.5, 4], period: 2,
     seq: (i) => (i % 2 === 0
       ? { v: 'ropeFace', pitch: 0.30, ang: 0.5, edge: false }    // tight twist
       : { v: 'ropeEdge', pitch: 0.30, ang: -0.5, edge: true }),
   },
   box: {
-    mm: [2, 3],
+    mm: [2, 3], period: 2,
     seq: (i) => (i % 2 === 0
       ? { v: 'boxFace', pitch: 0.42, ang: 0, edge: false }
       : { v: 'boxEdge', pitch: 0.42, ang: 0, edge: true }),
   },
   figaro: {
-    mm: [3, 5],
+    mm: [3, 5], period: 8,
     seq: (i) => {
       const m = i % 8;                       // 3 short pairs then 1 long pair
       if (m === 6) return { v: 'figLongFace', pitch: 0.80, ang: 0, edge: false };
@@ -179,15 +188,16 @@ export class LinkAtlas {
    * @param {string} variant key into VARIANTS
    * @param {number} dpr     device pixel ratio (atlas renders at >= 2x this)
    */
-  constructor(variant, dpr) {
+  constructor(variant, tier = 2) {
     const meta = VARIANTS[variant];
-    const ss = Math.max(SUPERSAMPLE, dpr);
+    const ss = tier;
     // footprint in design px at BASE_MM, then supersampled
     this.designW = meta.wMM * BASE_MM * PX_PER_MM;
     this.designH = meta.hMM * BASE_MM * PX_PER_MM;
     const diag = Math.ceil(Math.hypot(this.designW, this.designH) * ss) + 8;
     this.diag = diag;
     this.designSize = diag / ss;
+    this.rotSteps = N_ROT;
     this.cols = 8;
     const rows = Math.ceil(N_ROT / this.cols);
     this.canvas = makeCanvas(this.cols * diag, rows * diag);
@@ -270,7 +280,9 @@ export class LinkAtlas {
     const src = this.diag;
     const dst = this.designSize * (mm / BASE_MM);
 
-    if (along >= 0.995) {
+    // Only a real bend earns a transform; mild squeeze is imperceptible and
+    // a plain drawImage keeps the frame loop free of save/restore churn.
+    if (along >= 0.86) {
       ctx.drawImage(this.canvas, col * src, row * src, src, src,
         x - dst / 2, y - dst / 2, dst, dst);
       return;
@@ -285,5 +297,66 @@ export class LinkAtlas {
     ctx.drawImage(this.canvas, col * src, row * src, src, src,
       -dst / 2, -dst / 2, dst, dst);
     ctx.restore();
+  }
+}
+
+
+// ── run atlas ───────────────────────────────────────────────────────────────
+// A "run" is RUN_LINKS consecutive links, already interlocked and already
+// shaded, baked as ONE sprite per rotation step. Straight stretches of rope
+// stamp a single run instead of eight links plus eight clips, which is where
+// the frame budget actually went. RUN_LINKS is a multiple of every style's
+// weave period, so a run always starts on the same phase and one variant per
+// style suffices.
+export class RunAtlas {
+  /**
+   * @param {string} style
+   * @param {(ctx:CanvasRenderingContext2D, seq:object, x:number, ss:number)=>void} stampLink
+   */
+  constructor(style, ss, buildStrip, count = RUN_LINKS) {
+    const layout = STYLES[style];
+    const gaugePx = BASE_MM * PX_PER_MM;
+    // advance per link, in design px at BASE_MM
+    let len = 0;
+    for (let i = 0; i < count; i++) len += layout.seq(i).pitch * gaugePx;
+    this.runLenDesign = len;
+    this.linkCount = count;
+
+    // tallest variant in the sequence decides the strip height
+    let hMM = 0;
+    for (let i = 0; i < count; i++) hMM = Math.max(hMM, VARIANTS[layout.seq(i).v].hMM);
+    const hDesign = hMM * gaugePx * 1.25;
+
+    const diag = Math.ceil(Math.hypot(len, hDesign) * ss) + 8;
+    this.diag = diag;
+    this.designSize = diag / ss;
+    this.cols = 4;
+    const rows = Math.ceil(N_RUN_ROT / this.cols);
+    this.canvas = makeCanvas(this.cols * diag, rows * diag);
+    const atlas = this.canvas.getContext('2d');
+
+    const cell = makeCanvas(diag, diag);
+    const c = cell.getContext('2d');
+    for (let i = 0; i < N_RUN_ROT; i++) {
+      const theta = (i / N_RUN_ROT) * PI2;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, diag, diag);
+      c.translate(diag / 2, diag / 2);
+      c.rotate(theta);
+      // the strip is drawn centred, running along local +x
+      buildStrip(c, -len * ss / 2, ss);
+      const col = i % this.cols, row = (i / this.cols) | 0;
+      atlas.drawImage(cell, col * diag, row * diag);
+    }
+  }
+
+  /** Plain drawImage — no save/restore, no clip, no gradient. */
+  stamp(ctx, x, y, angle, scale) {
+    const b = Math.round((((angle % PI2) + PI2) % PI2) / PI2 * N_RUN_ROT) % N_RUN_ROT;
+    const col = b % this.cols, row = (b / this.cols) | 0;
+    const src = this.diag;
+    const dst = this.designSize * scale;
+    ctx.drawImage(this.canvas, col * src, row * src, src, src,
+      x - dst / 2, y - dst / 2, dst, dst);
   }
 }

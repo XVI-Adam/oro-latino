@@ -66,7 +66,7 @@ export class Stage {
     // Cap the effective dpr on very dense screens — beyond ~2.5 the extra
     // fill cost buys nothing visible on a phone.
     const raw = Math.max(1, window.devicePixelRatio || 1);
-    this.dpr = Math.min(raw, 2.5);
+    this.dpr = Math.min(raw, 2);   // beyond 2x buys nothing and costs fill rate
     const bw = Math.round(DESIGN.W * this.dpr);
     const bh = Math.round(DESIGN.H * this.dpr);
     if (this.canvas.width !== bw || this.canvas.height !== bh) {

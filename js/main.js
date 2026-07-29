@@ -16,6 +16,7 @@ import { PieceCard } from './piececard.js';
 import { Accessibility } from './a11y.js';
 import { AttractMode } from './attract.js';
 import { Sound } from './audio.js';
+import { perf, buildPerfHUD } from './perf.js';
 import { detectQuality, isCoarse, prefersReducedMotion, isPortrait, watchEnvironment } from './quality.js';
 import { Renderer } from './render.js';
 import { Overlay } from './overlay.js';
@@ -100,6 +101,13 @@ overlay.setHotspots(interior.hotspots);
 renderer.reducedMotion = reducedMotion;
 renderer.onCamera = (t) => overlay.setChromeFade(t);
 new DebugPanel(machine, (state) => machine.go(state));
+buildPerfHUD(() => jewelry.atlasSurfaces());
+perf.countDrawImage(stage.ctx);
+// one startup log, then the HUD keeps it live
+setTimeout(() => {
+  perf.measureAtlases(jewelry.atlasSurfaces());
+  console.info('[perf] startup', perf.snapshot());
+}, 1500);
 
 const isGateState = () =>
   machine.state === STATES.GATE_CLOSED || machine.state === STATES.GATE_OPENING;
