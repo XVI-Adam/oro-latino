@@ -10,6 +10,7 @@ import { Jewelry } from './jewelry.js';
 import { ChainRail } from './chains.js';
 import { buildChainTuner } from './chaintuner.js';
 import { Storefront } from './storefront.js';
+import { Interior } from './interior.js';
 import { Renderer } from './render.js';
 import { Overlay } from './overlay.js';
 import { DebugPanel } from './debug.js';
@@ -43,21 +44,27 @@ const windowChains = new ChainRail(stage, jewelry, () => {}, {
 const storefront = new Storefront({ ...GATE_RECT }, windowChains, jewelry,
   () => machine.go(STATES.ENTERING));
 
-// Which interactive box is under the pointer (non-gate scenes).
+// The shop interior: light box, wall cases, chain rack, counter, sticker wall.
+const interior = new Interior(jewelry);
+
+// Which interactive region is under the pointer (canvas hover highlight).
 let hoverId = null;
 
-const renderer = new Renderer(stage, machine, () => hoverId, gate, chainRail, storefront);
+const renderer = new Renderer(stage, machine, () => hoverId, gate, chainRail, storefront, interior);
 const overlay = new Overlay(machine, handleAction);
+overlay.setHotspots(interior.hotspots);
 new DebugPanel(machine, (state) => machine.go(state));
 
 const isGateState = () =>
   machine.state === STATES.GATE_CLOSED || machine.state === STATES.GATE_OPENING;
 const isCaseState = () => machine.state === STATES.CASE_FOCUS;
 const isStorefront = () => machine.state === STATES.STOREFRONT;
+const isInterior = () => machine.state === STATES.INTERIOR;
 
 machine.onChange((state) => {
   overlay.update(state);
   hoverId = null;
+  overlay.setHotspotHover(null);
   canvas.style.cursor = 'default';
   if (state !== STATES.CASE_FOCUS) chainRail.clearCursor();
   if (state !== STATES.STOREFRONT) windowChains.clearCursor();
@@ -117,6 +124,11 @@ canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture?.(e.pointerId);
     return;
   }
+  if (isInterior()) {
+    const spot = interior.hitTest(x, y);
+    if (spot && spot.to) machine.go(spot.to);
+    return;
+  }
   const hit = boxAt(x, y);
   if (hit) machine.go(hit.to);
 });
@@ -141,6 +153,13 @@ window.addEventListener('pointermove', (e) => {
     }
     return;
   }
+  if (isInterior()) {
+    const spot = interior.hitTest(x, y);
+    hoverId = spot ? spot.id : null;
+    overlay.setHotspotHover(hoverId);
+    canvas.style.cursor = spot && spot.to ? 'pointer' : 'default';
+    return;
+  }
   const hit = boxAt(x, y);
   hoverId = hit ? hit.id : null;
   canvas.style.cursor = hit ? 'pointer' : 'default';
@@ -163,7 +182,11 @@ window.addEventListener('pointerup', () => {
 canvas.addEventListener('pointerleave', () => {
   if (isCaseState()) chainRail.clearCursor();
   if (isStorefront()) windowChains.clearCursor();
-  if (!isGateState()) { hoverId = null; canvas.style.cursor = 'default'; }
+  if (!isGateState()) {
+    hoverId = null;
+    overlay.setHotspotHover(null);
+    canvas.style.cursor = 'default';
+  }
 });
 
 // Scroll: rolls the gate open, or swings the storefront door open.
@@ -192,4 +215,6 @@ machine.go(STATES.GATE_CLOSED);
 renderer.start();
 
 // Handy for console poking during development.
-window.OroLatino = { stage, machine, gate, chainRail, windowChains, storefront, jewelry, assets, renderer };
+window.OroLatino = {
+  stage, machine, gate, chainRail, windowChains, storefront, interior, jewelry, assets, renderer,
+};

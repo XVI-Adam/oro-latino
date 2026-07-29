@@ -101,14 +101,12 @@ export const SCENES = {
     actions: [],
   },
 
+  // Drawn entirely by interior.js; its hit regions carry DOM labels.
   [STATES.INTERIOR]: {
     backdrop: 'interior',
     plate: { num: '01', es: 'Adentro', en: 'Inside' },
-    boxes: [
-      { id: 'wall',      x: 120, y: 80,  w: 1608, h: 380, es: 'Pared de vitrinas', en: 'Wall cases' },
-      { id: 'counterL',  x: 160, y: 560, w: 620,  h: 380, es: 'Mostrador', en: 'Counter' },
-      { id: 'caseChain', x: 1010, y: 540, w: 700, h: 420, es: 'Vitrina de cadenas', en: 'Chain case', to: STATES.CASE_FOCUS },
-    ],
+    boxes: [],
+    hint: { es: 'Elige una vitrina', en: 'Pick a case' },
     actions: [],
   },
 

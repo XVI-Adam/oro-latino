@@ -17,9 +17,38 @@ export class Overlay {
     this.labelEs = document.getElementById('scene-label-es');
     this.labelEn = document.getElementById('scene-label-en');
     this.actionBar = document.getElementById('action-bar');
+    this.caseLabels = document.getElementById('case-labels');
+    this._caseEls = new Map();
 
     this._buildRoute();
     this.update(machine.state);
+  }
+
+  /**
+   * Build a bilingual label under each interior hit region. Positions are in
+   * design pixels — the overlay shares the canvas coordinate space.
+   * @param {Array<{id,x,y,w,h,es,en,to}>} hotspots
+   */
+  setHotspots(hotspots) {
+    this.caseLabels.innerHTML = '';
+    this._caseEls.clear();
+    for (const h of hotspots) {
+      const el = document.createElement('div');
+      el.className = 'case-label' + (h.to ? ' is-clickable' : '');
+      el.style.left = `${h.x + h.w / 2}px`;
+      el.style.top = `${h.y + h.h + 14}px`;
+      el.innerHTML = `<span class="es" lang="es">${h.es}</span>
+        <span class="dot">·</span>
+        <span class="en" lang="en">${h.en}</span>`;
+      if (h.to) el.addEventListener('click', () => this.onAction({ to: h.to }));
+      this.caseLabels.appendChild(el);
+      this._caseEls.set(h.id, el);
+    }
+  }
+
+  /** Mirror the canvas hover state onto the DOM labels. */
+  setHotspotHover(id) {
+    for (const [key, el] of this._caseEls) el.classList.toggle('is-hover', key === id);
   }
 
   _buildRoute() {
@@ -52,6 +81,10 @@ export class Overlay {
     for (const li of this.routeList.children) {
       li.classList.toggle('is-active', li.querySelector('.route-num').textContent === scene.plate.num);
     }
+
+    // Case labels belong to the interior only.
+    this.caseLabels.dataset.show = String(state === 'INTERIOR');
+    if (state !== 'INTERIOR') this.setHotspotHover(null);
 
     // Optional hint (e.g. the gate drag prompt).
     this.actionBar.innerHTML = '';

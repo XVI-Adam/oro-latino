@@ -9,13 +9,14 @@ export class Renderer {
    * @param {StateMachine} machine
    * @param {() => string|null} getHover  id of hovered interactive box, or null
    */
-  constructor(stage, machine, getHover, gate, chainRail, storefront) {
+  constructor(stage, machine, getHover, gate, chainRail, storefront, interior) {
     this.stage = stage;
     this.machine = machine;
     this.getHover = getHover;
     this.gate = gate;
     this.chainRail = chainRail;
     this.storefront = storefront;
+    this.interior = interior;
     this._raf = null;
     this._last = 0;
     this._loop = this._loop.bind(this);
@@ -50,6 +51,11 @@ export class Renderer {
 
     if (this.machine.state === STATES.STOREFRONT && this.storefront) {
       this.storefront.draw(ctx, now, 1);
+    }
+    // The interior is already there behind the ENTERING wipe — dolly into it.
+    if (this.interior &&
+        (this.machine.state === STATES.INTERIOR || this.machine.state === STATES.ENTERING)) {
+      this.interior.draw(ctx, now, this.getHover ? this.getHover() : null);
     }
     if (this.machine.state === STATES.CASE_FOCUS && this.chainRail) {
       this.chainRail.draw(ctx, now);

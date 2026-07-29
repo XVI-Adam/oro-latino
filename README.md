@@ -50,6 +50,18 @@ single CSS transform and letterboxed (`js/stage.js`).
   The gate reveals this scene as it rises (glow scales with gate height). A
   glass **door** on the right swings open by dragging its edge (spring physics
   with a tipping point, like the gate) or scrolling → `ENTERING → INTERIOR`.
+- **The interior** (`js/interior.js`) — `01 · Adentro / Inside`, drawn in
+  layers: a backlit acrylic **light box** hanging on chains (white face, black
+  "ORO LATINO INC / 212-925-1538", red diamond mark with sparkle lines), two
+  **wall cases** (white shelves on black backing in a wood surround), a **chain
+  rack** on black hooks, the **sticker wall** as a dense procedural collage,
+  **track spotlights** casting warm cones and pools over the cases, and an
+  L-shaped **glass counter** with aluminum framing in the foreground. A
+  multi-pane **window** on the right shows the storefront in reverse — our own
+  fascia sign mirrored, seen from inside. The three furniture pieces are
+  hover-highlightable hit regions with bilingual DOM labels
+  (`Cadenas · Chains`, `Anillos · Rings`, `Dijes · Pendants`); clicking the
+  chain rack goes to `CASE_FOCUS`.
 - **The chains** (`js/chains.js`) — the `CASE_FOCUS` scene is a rail of 22
   draggable gold chains simulated with **Verlet integration** (16–22 particles,
   pinned at both top ends, 6 relaxation iterations, heavy tip pendant via
