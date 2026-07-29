@@ -19,6 +19,7 @@
 
 import { DESIGN, PALETTE } from './config.js';
 import { CHAIN_STYLES, PENDANT_TYPES } from './jewelry.js';
+import { LIGHT_ANGLE } from './links.js';
 
 // ── tuning (defaults; damping/settleSpring/sleepThreshold/laneWidth are live) ─
 const FIXED = 1 / 60;      // fixed physics timestep (s)
@@ -68,8 +69,11 @@ class Chain {
     this.phase = rng() * Math.PI * 2;      // breeze phase offset
 
     this.style = spec.style;               // link style: rope/box/figaro/cuban
-    this.gauge = spec.gauge;               // per-chain link thickness
+    this.gauge = spec.gauge;               // link gauge in MILLIMETRES
     this.pendantType = spec.pendantType;   // cross/crucifix/medallion/tablet/null
+    // a ~1.0 multiplier for the non-link furniture (pendant, tag, shadow)
+    this.mmScale = spec.mmScale ?? 1;
+    this.sizeK = (spec.scale ?? 1) * (0.62 + (spec.gauge ?? 4) * 0.055);
 
     const scale = spec.scale ?? 1;         // overall size (storefront rail is smaller)
     const dropScale = spec.dropScale ?? 1; // lengthens the hang without fattening links
@@ -130,8 +134,8 @@ class Chain {
     this.tag = {
       anchorIdx,
       len,
-      w: 58 * scale,
-      h: 38 * scale,
+      w: 66 * scale,
+      h: 44 * scale,
       parts: [
         { x: a.x, y: a.y + len, px: a.x, py: a.y + len },
         { x: a.x, y: a.y + len * 2, px: a.x, py: a.y + len * 2 },
@@ -406,14 +410,14 @@ class Chain {
     const P = this.particles;
     this._contactShadow(ctx);
     this._disc(ctx);
-    jewelry.strokeChain(ctx, P, this.style, this.gauge);
+    jewelry.strokeChain(ctx, P, this.style, this.gauge, this.mmScale);
     if (this.pendantType) {
       const p = P[this.pendant];
       const a = P[this.pendant - 1], b = P[this.pendant + 1];
       const ang = Math.atan2(p.y - (a.y + b.y) / 2, p.x - (a.x + b.x) / 2);
       // tight AO where the pendant rests against the velvet backing
-      jewelry.ao(ctx, p.x, p.y + 16 * this.gauge, 20 * this.gauge, 8 * this.gauge, 0.5);
-      jewelry.stampPendant(ctx, this.pendantType, p.x, p.y, ang, this.gauge);
+      jewelry.ao(ctx, p.x, p.y + 16 * this.sizeK, 20 * this.sizeK, 8 * this.sizeK, 0.5);
+      jewelry.stampPendant(ctx, this.pendantType, p.x, p.y, ang, this.sizeK);
     }
     this._drawTag(ctx);
   }
@@ -431,7 +435,7 @@ class Chain {
     ctx.lineTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.strokeStyle = 'rgba(238,232,216,0.72)';
-    ctx.lineWidth = Math.max(1, 1.6 * this.gauge);
+    ctx.lineWidth = Math.max(1, 1.6 * this.sizeK);
     ctx.lineCap = 'round';
     ctx.stroke();
 
@@ -459,12 +463,18 @@ class Chain {
     ctx.fillStyle = 'rgba(90,78,50,0.55)';
     ctx.fill();
 
-    const label = this.piece && this.piece.price ? this.piece.price : '$ ?';
+    // real tags carry the gauge: "Cubana 10mm" over the price
     ctx.fillStyle = '#2A2417';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = `600 ${Math.round(h * 0.34)}px ui-monospace, Menlo, monospace`;
-    ctx.fillText(label, 0, h * 0.16);
+    if (this.piece) {
+      const name = (this.piece.name_es || '').split(' ').pop();
+      ctx.font = `600 ${Math.round(h * 0.24)}px ui-monospace, Menlo, monospace`;
+      ctx.fillText(`${name} ${this.piece.gauge_mm}mm`, 0, h * 0.02);
+    }
+    const label = this.piece && this.piece.price ? this.piece.price : '$ ?';
+    ctx.font = `700 ${Math.round(h * 0.30)}px ui-monospace, Menlo, monospace`;
+    ctx.fillText(label, 0, h * 0.30);
     ctx.restore();
   }
 
@@ -477,7 +487,7 @@ class Chain {
   _contactShadow(ctx) {
     const P = this.particles, rp = this.restPose;
     if (!rp) return;
-    const g = this.gauge;
+    const g = this.sizeK;   // ~1.0 visual multiplier derived from the mm gauge
     const pts = new Array(P.length);
     for (let i = 0; i < P.length; i++) {
       const drop = Math.sin(Math.PI * P[i].t);       // 0 at the pins, 1 at the tip
@@ -567,7 +577,7 @@ export class ChainRail {
   constructor(stage, jewelry, onTap, opts = {}) {
     const {
       railY = 210, x0 = 150, x1 = DESIGN.W - 150, seed = 1337, scale = 1,
-      dropScale = 1, pieces = null, tags = false,
+      dropScale = 1, mmScale = 1, pieces = null, tags = false,
       quality = 1, reducedMotion = false, coarsePointer = false,
     } = opts;
     const count = pieces ? pieces.length : (opts.count ?? 22);
@@ -599,13 +609,13 @@ export class ChainRail {
       const spec = piece
         ? {
             style: CHAIN_STYLES.includes(piece.chain) ? piece.chain : 'rope',
-            gauge: (piece.renderGauge ?? 1) * scale,
+            gauge: piece.gauge_mm ?? 4, mmScale,
             pendantType: piece.pendant || null,
             scale, dropScale, quality, piece, tag: tags,
           }
         : {
             style: CHAIN_STYLES[i % CHAIN_STYLES.length],
-            gauge: (0.82 + rng() * 0.5) * scale,
+            gauge: 2.5 + rng() * 5, mmScale,
             pendantType: pendants[i % pendants.length],
             scale, dropScale, quality, tag: tags,
           };
@@ -732,6 +742,7 @@ export class ChainRail {
     if (best < 0) return false;
     this.activate(best);
     this.chains[best].grab(bestP, x, y);
+    this._curvatureGlints(best, 3);      // picking one up catches the light
     this.dragging = true;
     this.dragChain = best;
     return true;
@@ -795,6 +806,7 @@ export class ChainRail {
       const e = c.energy();
       if (e < 0.6) continue;
       const gust = Math.min(1.6, e * 0.25);
+      if (e > 2.2 && Math.random() < 0.06) this._curvatureGlints(i, 2);
       for (let k = i - 2; k <= i + 2; k++) {
         if (k === i || k < 0 || k >= this.chains.length) continue;
         const n = this.chains[k];
@@ -838,20 +850,65 @@ export class ChainRail {
     for (const i of done) { this.active.delete(i); this._needsComposite = true; }
   }
 
-  /** Schedule and advance the roving specular glints. */
+  /** Schedule and advance the specular glints. */
   _stepGlints(dt) {
     for (let i = this.glints.length - 1; i >= 0; i--) {
       const g = this.glints[i];
       g.t += dt / g.dur;
       if (g.t >= 1) this.glints.splice(i, 1);
     }
-    this._nextGlint -= dt;
-    if (this._nextGlint <= 0 && this.glints.length < 2) {
-      const i = (Math.random() * this.chains.length) | 0;
-      if (!this.glints.some((g) => g.i === i)) {
-        this.glints.push({ i, t: 0, dur: 0.55 + Math.random() * 0.45, dir: Math.random() < 0.5 ? 1 : -1 });
+    // Every visible chain gets its own 4–9s timer.
+    for (const c of this.chains) {
+      c.glintIn = (c.glintIn ?? (4 + Math.random() * 5)) - dt;
+      if (c.glintIn > 0) continue;
+      c.glintIn = 4 + Math.random() * 5;
+      if (this.glints.length < 5) this._spawnGlint(c.index);
+    }
+  }
+
+  /**
+   * @param {number} i        chain index
+   * @param {number} [atLink] force a link index (used for curvature spawns)
+   */
+  _spawnGlint(i, atLink = null) {
+    const c = this.chains[i];
+    if (!c) return;
+    const links = this.jewelry.linkPositions(c.particles, c.style, c.gauge, c.mmScale);
+    if (!links.length) return;
+    let idx = atLink;
+    if (idx == null) {
+      // bias toward links whose face turns to the light
+      let best = 0, bestScore = -1;
+      for (let k = 0; k < 6; k++) {
+        const cand = (Math.random() * links.length) | 0;
+        const score = Math.cos(links[cand].a - LIGHT_ANGLE) + Math.random() * 0.5;
+        if (score > bestScore) { bestScore = score; best = cand; }
       }
-      this._nextGlint = 0.9 + Math.random() * 2.6;   // random intervals
+      idx = best;
+    }
+    const L = links[Math.min(idx, links.length - 1)];
+    this.glints.push({
+      i, link: L.i, x: L.x, y: L.y,
+      t: 0, dur: 0.5 + Math.random() * 0.35,
+      span: 1 + ((Math.random() * 2) | 0),      // 3–4 links across
+      r: 7 + Math.random() * 6,
+    });
+  }
+
+  /** A swinging or grabbed chain throws extra sparks off its tightest bends. */
+  _curvatureGlints(i, n = 2) {
+    const c = this.chains[i];
+    if (!c) return;
+    const links = this.jewelry.linkPositions(c.particles, c.style, c.gauge, c.mmScale);
+    if (links.length < 4) return;
+    // squeeze < 1 marks a bend; pick the tightest few
+    const bends = links
+      .map((L, k) => ({ k, s: L.squeeze }))
+      .sort((a, b) => a.s - b.s)
+      .slice(0, 6);
+    for (let j = 0; j < Math.min(n, bends.length); j++) {
+      const pick = bends[(Math.random() * bends.length) | 0];
+      this._spawnGlint(i, pick.k);
     }
   }
 
@@ -859,10 +916,13 @@ export class ChainRail {
     for (const g of this.glints) {
       const c = this.chains[g.i];
       if (!c) continue;
-      const pos = g.dir > 0 ? g.t : 1 - g.t;
-      // fade in and out so the band never pops
+      // fade in and out so nothing pops
       const strength = Math.sin(Math.PI * g.t);
-      this.jewelry.glintChain(ctx, c.particles, c.style, c.gauge, pos, 0.17, strength);
+      this.jewelry.glintChain(ctx, c.particles, c.style, c.gauge,
+        g.link, g.span, strength, c.mmScale);
+      // the star rides the link it was born on
+      const links = c.particles;
+      this.jewelry.sparkle(ctx, g.x, g.y, g.r * (0.6 + 0.4 * strength), strength * 0.9);
     }
   }
 

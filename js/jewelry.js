@@ -11,8 +11,9 @@
 // cutout by key and, absent one, draws its procedural version — so the page has
 // zero required image dependencies.
 
+import { LinkAtlas, STYLES, VARIANTS, visualMM, PX_PER_MM, LIGHT_ANGLE } from './links.js';
+
 const PI2 = Math.PI * 2;
-const N_ROT = 48; // rotation buckets over 360°
 
 function makeCanvas(w, h) {
   const c = document.createElement('canvas');
@@ -40,110 +41,6 @@ function goldGrad(ctx, half) {
   return g;
 }
 
-// ── link-variant geometry (drawn centered at origin, long axis on +x) ───────
-// Each draw(ctx, dpr) renders in device pixels. `w`/`h` bound the sprite (design
-// px) so the rotation cache can size its cells.
-const VARIANTS = {
-  rope: {
-    w: 16, h: 10,
-    draw(ctx, dpr) {
-      const L = 16 * dpr, T = 9 * dpr;
-      ctx.fillStyle = goldGrad(ctx, T / 2);
-      roundRect(ctx, -L / 2, -T / 2, L, T, T / 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.2 * dpr;
-      ctx.beginPath(); ctx.moveTo(-L / 2 + T / 2, -T / 2 + 1.3 * dpr); ctx.lineTo(L / 2 - T / 2, -T / 2 + 1.3 * dpr); ctx.stroke();
-      ctx.strokeStyle = 'rgba(60,42,4,0.55)'; ctx.lineWidth = 1 * dpr;
-      ctx.beginPath(); ctx.moveTo(-L / 2 + T / 2, T / 2 - 1.1 * dpr); ctx.lineTo(L / 2 - T / 2, T / 2 - 1.1 * dpr); ctx.stroke();
-    },
-  },
-  box: {
-    w: 15, h: 15,
-    draw(ctx, dpr) {
-      const s = 13 * dpr, t = 3.4 * dpr, r = 3 * dpr;
-      ctx.fillStyle = goldGrad(ctx, s / 2);
-      roundRect(ctx, -s / 2, -s / 2, s, s, r); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.3 * dpr;
-      ctx.beginPath(); ctx.moveTo(-s / 2 + r, -s / 2 + 0.9 * dpr); ctx.lineTo(s / 2 - r, -s / 2 + 0.9 * dpr); ctx.stroke();
-      ctx.save(); ctx.globalCompositeOperation = 'destination-out';
-      roundRect(ctx, -s / 2 + t, -s / 2 + t, s - 2 * t, s - 2 * t, r * 0.6); ctx.fill();
-      ctx.restore();
-    },
-  },
-  cuban: {
-    w: 27, h: 21,
-    draw(ctx, dpr) {
-      const rx = 13 * dpr, ry = 10 * dpr, t = 5.2 * dpr;
-      ctx.fillStyle = goldGrad(ctx, ry);
-      ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, PI2); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.6 * dpr;
-      ctx.beginPath(); ctx.ellipse(-rx * 0.12, -ry * 0.12, rx - t * 0.6, ry - t * 0.6, 0, Math.PI * 1.02, Math.PI * 1.82); ctx.stroke();
-      ctx.save(); ctx.globalCompositeOperation = 'destination-out';
-      ctx.beginPath(); ctx.ellipse(0, 0, rx - t, ry - t, 0, 0, PI2); ctx.fill();
-      ctx.restore();
-      ctx.strokeStyle = 'rgba(70,48,4,0.6)'; ctx.lineWidth = 1 * dpr;
-      ctx.beginPath(); ctx.ellipse(0, 0, rx - 0.6 * dpr, ry - 0.6 * dpr, 0, 0, PI2); ctx.stroke();
-    },
-  },
-  figShort: {
-    w: 15, h: 12,
-    draw(ctx, dpr) { ovalRing(ctx, dpr, 7, 5.4, 2.8); },
-  },
-  figLong: {
-    w: 27, h: 12,
-    draw(ctx, dpr) { ovalRing(ctx, dpr, 13, 5.4, 2.8); },
-  },
-};
-
-function ovalRing(ctx, dpr, rx, ry, t) {
-  rx *= dpr; ry *= dpr; t *= dpr;
-  ctx.fillStyle = goldGrad(ctx, ry);
-  ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, PI2); ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = Math.max(1, t * 0.5);
-  ctx.beginPath(); ctx.ellipse(0, 0, rx - t * 0.5, ry - t * 0.5, 0, Math.PI * 1.05, Math.PI * 1.8); ctx.stroke();
-  ctx.save(); ctx.globalCompositeOperation = 'destination-out';
-  ctx.beginPath(); ctx.ellipse(0, 0, rx - t, ry - t, 0, 0, PI2); ctx.fill();
-  ctx.restore();
-}
-
-// Per-style layout: which variants, their spacing (pitch), and the extra
-// per-link rotation that gives each weave its character.
-const STYLES = {
-  rope:   { seq: (i) => ({ v: 'rope',  pitch: 6.5, ang: (i % 2 ? 1 : -1) * 0.55 }) },
-  box:    { seq: (i) => ({ v: 'box',   pitch: 11,  ang: (i % 2 ? Math.PI / 2 : 0) }) },
-  cuban:  { seq: (i) => ({ v: 'cuban', pitch: 14,  ang: (i % 2 ? 1 : -1) * 0.26 }) },
-  figaro: { seq: (i) => (i % 4 === 3 ? { v: 'figLong', pitch: 22, ang: 0 } : { v: 'figShort', pitch: 12, ang: 0 }) },
-};
-
-// ── rotation cache: one variant pre-rendered at N_ROT angles ────────────────
-class RotationCache {
-  constructor(variant, dpr, buildUnit) {
-    const meta = VARIANTS[variant];
-    const diag = Math.ceil(Math.hypot(meta.w, meta.h) * dpr) + 4 * dpr;
-    this.diag = diag;
-    this.designSize = diag / dpr;
-    this.cols = 8;
-    const rows = Math.ceil(N_ROT / this.cols);
-    this.canvas = makeCanvas(this.cols * diag, rows * diag);
-    const c = this.canvas.getContext('2d');
-    for (let i = 0; i < N_ROT; i++) {
-      const col = i % this.cols, row = (i / this.cols) | 0;
-      c.save();
-      c.translate(col * diag + diag / 2, row * diag + diag / 2);
-      c.rotate((i / N_ROT) * PI2);
-      buildUnit(c);
-      c.restore();
-    }
-  }
-
-  stamp(ctx, x, y, angle, gauge) {
-    let b = Math.round((((angle % PI2) + PI2) % PI2) / PI2 * N_ROT) % N_ROT;
-    const col = b % this.cols, row = (b / this.cols) | 0;
-    const src = this.diag;
-    const dst = this.designSize * gauge;
-    ctx.drawImage(this.canvas, col * src, row * src, src, src, x - dst / 2, y - dst / 2, dst, dst);
-  }
-}
-
 export class Jewelry {
   /**
    * @param {AssetRegistry} registry
@@ -163,25 +60,9 @@ export class Jewelry {
     if (d !== this.dpr) { this.dpr = d; this.links.clear(); this.pendants.clear(); }
   }
 
-  // Build closure that prefers a photographic cutout, else procedural geometry.
-  _unitBuilder(variant) {
-    const key = 'link:' + variant;
-    this._watch(key, () => this.links.delete(variant));
-    const meta = VARIANTS[variant];
-    return (c) => {
-      const img = this.reg.cutout(key);
-      if (img) {
-        const w = meta.w * this.dpr, h = meta.h * this.dpr;
-        c.drawImage(img, -w / 2, -h / 2, w, h);
-      } else {
-        meta.draw(c, this.dpr);
-      }
-    };
-  }
-
   _link(variant) {
     let rc = this.links.get(variant);
-    if (!rc) { rc = new RotationCache(variant, this.dpr, this._unitBuilder(variant)); this.links.set(variant, rc); }
+    if (!rc) { rc = new LinkAtlas(variant, this.dpr); this.links.set(variant, rc); }
     return rc;
   }
 
@@ -193,77 +74,171 @@ export class Jewelry {
 
   // ── chains ────────────────────────────────────────────────────────────────
   /**
-   * Stamp a chain of `style` along the particle polyline `P` at `gauge` scale.
-   * @param {Array<{x:number,y:number}>} P
+   * Resolve every link along the rope: position, tangent angle, and how much
+   * the local curvature should foreshorten it. Shared by the stamping passes
+   * and the glint pass so they can never disagree about link placement.
    */
-  /**
-   * Walk the rope polyline and hand every link position to `cb`, along with
-   * its normalized distance along the chain. Shared by the normal stamping
-   * pass and the glint pass so they can never disagree about link placement.
-   */
-  _walk(P, layout, gauge, cb) {
-    // total length first, so each link knows where it sits along the chain
-    let total = 0;
-    for (let s = 0; s < P.length - 1; s++) {
-      total += Math.hypot(P[s + 1].x - P[s].x, P[s + 1].y - P[s].y);
-    }
-    total = total || 1;
+  _layout(P, layout, mm) {
+    const n = P.length;
+    if (n < 2) return [];
 
+    // per-segment direction and length
+    const segA = new Array(n - 1), segL = new Array(n - 1);
+    for (let i = 0; i < n - 1; i++) {
+      const dx = P[i + 1].x - P[i].x, dy = P[i + 1].y - P[i].y;
+      segA[i] = Math.atan2(dy, dx);
+      segL[i] = Math.hypot(dx, dy) || 1e-6;
+    }
+    const wrap = (a) => { while (a > Math.PI) a -= PI2; while (a < -Math.PI) a += PI2; return a; };
+
+    const out = [];
     let idx = 0;
-    let travelled = 0;
-    let need = layout.seq(0).pitch * gauge * 0.5;
-    for (let s = 0; s < P.length - 1; s++) {
+    const mmPx = mm * PX_PER_MM;               // gauge in pixels
+    let need = layout.seq(0).pitch * mmPx * 0.5;
+    for (let s = 0; s < n - 1; s++) {
       const ax = P[s].x, ay = P[s].y;
       const dx = P[s + 1].x - ax, dy = P[s + 1].y - ay;
-      const len = Math.hypot(dx, dy) || 1e-6;
-      const ang = Math.atan2(dy, dx);
+      const len = segL[s];
+      // smooth the tangent across the joint, and measure how hard it turns
+      const prevA = s > 0 ? segA[s - 1] : segA[s];
+      const nextA = s < n - 2 ? segA[s + 1] : segA[s];
+      const turn = Math.abs(wrap(nextA - prevA));
+      const arc = (s > 0 ? segL[s - 1] : 0) + len + (s < n - 2 ? segL[s + 1] : 0);
+      const curv = turn / Math.max(arc, 1e-6);          // rad per px
+      // a tight bend squeezes links toward ellipses and packs them closer
+      const squeeze = Math.max(0.55, 1 - curv * 165);
+
       let pos = 0;
       while (pos + need <= len) {
         pos += need;
         const f = pos / len;
+        // blend toward the neighbouring segment angles across the joint
+        const a = f < 0.5
+          ? segA[s] + wrap(prevA - segA[s]) * (0.5 - f) * 0.5
+          : segA[s] + wrap(nextA - segA[s]) * (f - 0.5) * 0.5;
         const link = layout.seq(idx);
-        cb(link.v, ax + dx * f, ay + dy * f, ang + link.ang, (travelled + pos) / total);
+        out.push({
+          v: link.v, edge: !!link.edge, i: idx,
+          x: ax + dx * f, y: ay + dy * f,
+          a: a + link.ang,
+          squeeze,
+        });
         idx++;
-        need = layout.seq(idx).pitch * gauge;
+        need = layout.seq(idx).pitch * mmPx * squeeze;
       }
       need -= (len - pos);
-      travelled += len;
+    }
+    return out;
+  }
+
+  /** Millimetre gauge for a chain, clamped into a legible range. */
+  gaugeMM(mm) { return visualMM(mm); }
+
+  /**
+   * Draw a chain. `mm` is the real gauge in millimetres.
+   *
+   * Three passes give the weave: edge-on links go down first, the face-on
+   * rings are laid over them, then the edge-on links are re-stamped through a
+   * narrow clip so their shanks read as passing *through* the rings.
+   */
+  strokeChain(ctx, P, style, mm = 4, depth = 1) {
+    this._checkDpr();
+    const layout = STYLES[style] || STYLES.rope;
+    const g = visualMM(mm) * depth;   // `depth` shrinks distant depictions only
+    const links = this._layout(P, layout, g);
+    if (!links.length) return;
+
+    // soft cast shadow + a dark cord so the chain reads as one object
+    ctx.save();
+    ctx.translate(2, 4);
+    this._core(ctx, P, g * PX_PER_MM * 0.85, 'rgba(0,0,0,0.22)');
+    ctx.restore();
+    this._core(ctx, P, g * PX_PER_MM * 0.34, 'rgba(52,34,4,0.9)');
+
+    // pass 1 — edge-on links (they sit behind)
+    for (const L of links) {
+      if (!L.edge) continue;
+      this._link(L.v).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+    }
+    // pass 2 — face-on rings over them
+    for (const L of links) {
+      if (L.edge) continue;
+      this._link(L.v).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+    }
+    // pass 3 — the threading sliver: re-stamp each edge-on link clipped to a
+    // band across the chain, so it visibly passes through the ring it links.
+    const band = g * PX_PER_MM * 0.30;
+    for (const L of links) {
+      if (!L.edge) continue;
+      ctx.save();
+      ctx.translate(L.x, L.y);
+      ctx.rotate(L.a);
+      ctx.beginPath();
+      ctx.rect(-band, -band * 2.2, band * 2, band * 4.4);
+      ctx.clip();
+      ctx.rotate(-L.a);
+      ctx.translate(-L.x, -L.y);
+      this._link(L.v).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+      ctx.restore();
     }
   }
 
-  strokeChain(ctx, P, style, gauge = 1) {
-    this._checkDpr();
-    const layout = STYLES[style] || STYLES.rope;
-
-    // one soft shadow polyline for depth + continuity (a single stroke, not
-    // per-link geometry) — keeps the chain reading as one object under motion
-    ctx.save();
-    ctx.translate(2, 4);
-    this._core(ctx, P, 5 * gauge, 'rgba(0,0,0,0.28)');
-    ctx.restore();
-    this._core(ctx, P, 2.2 * gauge, 'rgba(90,66,10,0.6)'); // thin gold cord
-
-    this._walk(P, layout, gauge, (v, x, y, a) => this._link(v).stamp(ctx, x, y, a, gauge));
-  }
-
   /**
-   * Specular glint sweeping along a chain. Re-stamps only the links inside a
-   * soft band with `lighter` compositing — the atlas sprite is its own mask, so
-   * the highlight lands exactly on the gold and nowhere else.
-   * @param {number} pos  0→1 band centre along the chain
+   * Brighten a short run of links, biased toward those facing the light.
+   * @param {number} centre index of the brightest link
+   * @param {number} span   how many links either side pick up the sweep
    */
-  glintChain(ctx, P, style, gauge = 1, pos = 0, width = 0.17, strength = 1) {
+  glintChain(ctx, P, style, mm = 4, centre = 0, span = 2, strength = 1, depth = 1) {
     this._checkDpr();
     const layout = STYLES[style] || STYLES.rope;
+    const g = visualMM(mm) * depth;
+    const links = this._layout(P, layout, g);
+    if (!links.length) return;
+
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    this._walk(P, layout, gauge, (v, x, y, a, t) => {
-      const d = Math.abs(t - pos);
-      if (d > width) return;
-      const fall = 1 - d / width;
-      ctx.globalAlpha = fall * fall * 0.55 * strength;
-      this._link(v).stamp(ctx, x, y, a, gauge);
-    });
+    for (const L of links) {
+      const d = Math.abs(L.i - centre);
+      if (d > span) continue;
+      // links whose face turns toward the light take the highlight hardest
+      const facing = 0.55 + 0.45 * Math.cos(L.a - LIGHT_ANGLE);
+      const fall = 1 - d / (span + 1);
+      ctx.globalAlpha = Math.max(0, fall * fall * facing * 0.5 * strength);
+      this._link(L.v).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+    }
+    ctx.restore();
+  }
+
+  /** Where along the chain the links are — used to place sparkles. */
+  linkPositions(P, style, mm = 4, depth = 1) {
+    return this._layout(P, STYLES[style] || STYLES.rope, visualMM(mm) * depth);
+  }
+
+  /** A small 4-point star catching the light. */
+  sparkle(ctx, x, y, r, alpha = 1) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.globalCompositeOperation = 'lighter';
+    const core = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+    core.addColorStop(0, `rgba(255,250,232,${0.95 * alpha})`);
+    core.addColorStop(0.35, `rgba(255,232,170,${0.35 * alpha})`);
+    core.addColorStop(1, 'rgba(255,232,170,0)');
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, PI2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255,250,232,${0.85 * alpha})`;
+    ctx.beginPath();
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * PI2;
+      const long = r * (k % 2 === 0 ? 2.5 : 1.6);
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a - 0.10) * r * 0.28, Math.sin(a - 0.10) * r * 0.28);
+      ctx.lineTo(Math.cos(a) * long, Math.sin(a) * long);
+      ctx.lineTo(Math.cos(a + 0.10) * r * 0.28, Math.sin(a + 0.10) * r * 0.28);
+    }
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
   }
 

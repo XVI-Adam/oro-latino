@@ -73,7 +73,7 @@ chainTuner.hide();
 // The storefront window: a second, smaller chain rail (same sim) plus the
 // layered scene — sign, trays, bangles, glass, and the draggable entry door.
 const windowChains = new ChainRail(stage, jewelry, () => {}, {
-  railY: 265, x0: 320, x1: 1330, count: 13, seed: 4242, scale: 0.7,
+  railY: 265, x0: 320, x1: 1330, count: 13, seed: 4242, scale: 0.7, mmScale: 0.5,
   quality: QUALITY, reducedMotion, coarsePointer: COARSE,
 });
 const storefront = new Storefront({ ...GATE_RECT }, windowChains, jewelry,

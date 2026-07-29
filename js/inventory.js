@@ -37,10 +37,12 @@ const FALLBACK = {
   ],
 };
 
-/** Visual link thickness derived from the piece's real gauge in millimetres. */
+/**
+ * Kept for compatibility: link size now comes straight from `gauge_mm`, which
+ * the renderer converts through a single pixels-per-mm constant (links.js).
+ */
 export function renderGauge(piece) {
-  const mm = Number(piece.gauge_mm) || 5;
-  return Math.max(0.6, Math.min(1.7, 0.62 + mm * 0.075));
+  return Number(piece.gauge_mm) || 5;
 }
 
 /** Fill {name_es}-style placeholders in a copy template. */

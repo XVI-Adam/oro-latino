@@ -167,7 +167,7 @@ export class Interior {
       this.rackChains.push({
         x, drop,
         style: ['rope', 'box', 'figaro', 'cuban'][i % 4],
-        gauge: 0.5 + rng() * 0.22,
+        gauge: 2.6 + rng() * 2.2,   // mm
       });
     }
   }
@@ -450,7 +450,7 @@ export class Interior {
       for (let i = 0; i < n; i++) {
         pts.push({ x: c.x, y: top + (c.drop * i) / (n - 1) });
       }
-      this.jewelry.strokeChain(ctx, pts, c.style, c.gauge);
+      this.jewelry.strokeChain(ctx, pts, c.style, c.gauge, 0.42);
     }
   }
 
@@ -465,7 +465,7 @@ export class Interior {
       for (let i = 0; i < 5; i++) {
         pts.push({ x: hx, y: CEILING_H - 6 + ((B.y - CEILING_H + 6) * i) / 4 });
       }
-      this.jewelry.strokeChain(ctx, pts, 'box', 0.5);
+      this.jewelry.strokeChain(ctx, pts, 'box', 3, 0.5);
     }
 
     // aluminum case

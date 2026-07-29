@@ -130,6 +130,35 @@ chains hang, their link style, visual gauge (derived from the real `gauge_mm`),
 and pendant. `js/inventory.js` loads it and falls back to a small built-in set
 if the file is missing, so the page still runs.
 
+## The metal
+
+Link rendering is its own module (`js/links.js`), still sprite-atlas based:
+
+- **Interlocked.** Every style has two variants — a face-on ring and an edge-on
+  profile — and chains alternate them. Three draw passes give the weave: edge-on
+  links go down first, face-on rings over them, then the edge-on links are
+  re-stamped through a narrow clip so their shanks read as passing *through*
+  the rings. Cuban links overlap ~30%.
+- **One global light** (top-left, matching the interior spots). The body
+  gradient is baked in link-local space, but the specular hotspot and the
+  occlusion crescents are composited in *cell* space with `source-atop` — so as
+  a link turns through the atlas's 32 rotation steps the highlight **migrates
+  across it** instead of riding along. Ramp: `#5C3D0E` core → mid → bright →
+  `#FFF6D8` hotspot.
+- **Real-world scale.** Links are authored in millimetres and converted through
+  one `PX_PER_MM` constant (rope 2.5–4, box 2–3, figaro 3–5, Cuban 6–12). A
+  `visualMM` compressor keeps the heaviest chain within ~4x the lightest.
+  `gauge_mm` lives in `pieces.json` and shows on the tag — "Cubana 8mm".
+- **Curvature-aware.** Links foreshorten along the path tangent and pack more
+  densely where the rope bends, so the bottom of a hanging loop reads as chain
+  turning a corner rather than beads clumping.
+- **Life.** Each chain fires a glint every 4–9s: a 4-point star plus a
+  brightening sweep over 3–4 consecutive links, biased toward links facing the
+  light. Grabbing a chain, or swinging it hard, throws 2–3 extra from its
+  tightest bends.
+
+Atlases render at 2x supersample minimum, 32 rotation steps.
+
 ## Polish & performance
 
 Details that only show up when you sit with it: price tags **flutter** from the
