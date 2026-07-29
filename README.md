@@ -130,6 +130,29 @@ chains hang, their link style, visual gauge (derived from the real `gauge_mm`),
 and pendant. `js/inventory.js` loads it and falls back to a small built-in set
 if the file is missing, so the page still runs.
 
+## Attract mode
+
+After **20s idle** — or via the **Recorrido / Tour** button — a ghost cursor
+walks the whole journey: rolls the gate up, pauses on the storefront, pulls the
+door open, opens the chain case, swings a Cuban link, and opens a piece card.
+
+The tour drives the app **only** by dispatching real `PointerEvent`s into the
+same listeners a person hits (`pointerdown` on the canvas, `pointermove` /
+`pointerup` on the window). It never calls the state machine or the physics
+directly, so the demo can't drift from real behaviour — if a real drag would
+fail, the tour fails identically.
+
+Cursor motion is human-imperfect: eased ramps, a perpendicular arc so the path
+bows like a wrist, a small overshoot that settles back, per-frame jitter,
+randomized durations, and a beat of hesitation before each click.
+
+**Cancellation** keys off `event.isTrusted` — browser-generated input is
+trusted, `dispatchEvent` output is not. Any real input aborts mid-motion,
+releases a held pointer so nothing is left mid-drag, and hands control back
+wherever the tour reached. The whole script is **frame-paced** (rAF, not
+`setTimeout`), so a backgrounded tab freezes the tour with the rendering
+instead of racing ahead of the physics it's driving.
+
 ## Phones & accessibility
 
 - **Per-scene mobile framing** — in portrait the design space is cropped to the

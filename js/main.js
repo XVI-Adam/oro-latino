@@ -14,6 +14,7 @@ import { Interior } from './interior.js';
 import { loadInventory, renderGauge } from './inventory.js';
 import { PieceCard } from './piececard.js';
 import { Accessibility } from './a11y.js';
+import { AttractMode } from './attract.js';
 import { detectQuality, isCoarse, prefersReducedMotion, isPortrait, watchEnvironment } from './quality.js';
 import { Renderer } from './render.js';
 import { Overlay } from './overlay.js';
@@ -158,6 +159,13 @@ function boxAt(designX, designY) {
   return null;
 }
 
+// Pointer capture throws NotFoundError for a pointerId that isn't an active
+// pointer — which is exactly what synthesized (attract-mode) events are. The
+// capture is an optimisation, never a requirement, so failing it is harmless.
+function capturePointer(e) {
+  try { canvas.setPointerCapture?.(e.pointerId); } catch { /* synthetic pointer */ }
+}
+
 // ── input ───────────────────────────────────────────────────────────────────
 canvas.addEventListener('pointerdown', (e) => {
   const { x, y } = stage.toDesign(e.clientX, e.clientY);
@@ -165,13 +173,13 @@ canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     gate.pointerDown(y);
     canvas.style.cursor = 'grabbing';
-    canvas.setPointerCapture?.(e.pointerId);
+    capturePointer(e);
     return;
   }
   if (isCaseState()) {
     e.preventDefault();
     if (chainRail.pointerDown(x, y)) canvas.style.cursor = 'grabbing';
-    canvas.setPointerCapture?.(e.pointerId);
+    capturePointer(e);
     return;
   }
   if (isStorefront()) {
@@ -182,7 +190,7 @@ canvas.addEventListener('pointerdown', (e) => {
     } else if (windowChains.pointerDown(x, y)) {
       canvas.style.cursor = 'grabbing';
     }
-    canvas.setPointerCapture?.(e.pointerId);
+    capturePointer(e);
     return;
   }
   if (isInterior()) {
@@ -284,6 +292,16 @@ machine.go(STATES.GATE_CLOSED);
 renderer.start();
 
 // Handy for console poking during development.
+// ── attract mode ──────────────────────────────────────────────────────────
+// Drives the app purely by synthesizing pointer events into the same listeners
+// a person hits, so the demo can never desync from real behaviour.
+const attract = new AttractMode({
+  stage, machine, canvas, chainRail, storefront, interior, gate,
+  states: STATES,
+  reducedMotion: () => reducedMotion,
+});
+document.getElementById('tour-btn').addEventListener('click', () => attract.start());
+
 // ── accessibility: keyboard path + parallel screen-reader lists ────────────
 const a11y = new Accessibility({
   machine, chainRail, interior, inventory,
@@ -327,5 +345,5 @@ watchEnvironment(() => {
 
 window.OroLatino = {
   stage, machine, gate, chainRail, windowChains, storefront, interior,
-  inventory, pieceCard, jewelry, assets, renderer,
+  inventory, pieceCard, jewelry, assets, renderer, attract, a11y,
 };

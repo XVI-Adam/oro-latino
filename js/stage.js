@@ -79,6 +79,15 @@ export class Stage {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
+  /** Convert a design-pixel point to viewport (client) coordinates. */
+  toClient(designX, designY) {
+    const rect = this.stageEl.getBoundingClientRect();
+    return {
+      x: rect.left + designX * this.scale,
+      y: rect.top + designY * this.scale,
+    };
+  }
+
   /** Convert a viewport (client) point to design-pixel coordinates. */
   toDesign(clientX, clientY) {
     const rect = this.stageEl.getBoundingClientRect();

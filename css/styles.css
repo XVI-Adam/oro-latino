@@ -437,6 +437,72 @@ html, body {
   color: var(--gold-hi);
 }
 
+/* ── Attract mode ────────────────────────────────────────────────────────── */
+#ghost-cursor {
+  position: fixed;
+  top: 0; left: 0;
+  z-index: 150;
+  width: 0; height: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+#ghost-cursor[data-show="true"] { opacity: 1; }
+#ghost-cursor .gc-ring,
+#ghost-cursor .gc-dot {
+  position: absolute;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+#ghost-cursor .gc-ring {
+  width: 34px; height: 34px;
+  border: 2px solid rgba(232, 200, 106, 0.75);
+  box-shadow: 0 0 18px rgba(212, 175, 55, 0.5);
+  transition: width 140ms ease, height 140ms ease, background 140ms ease;
+}
+#ghost-cursor .gc-dot {
+  width: 7px; height: 7px;
+  background: var(--gold-hi);
+  box-shadow: 0 0 10px rgba(232, 200, 106, 0.9);
+}
+#ghost-cursor[data-down="true"] .gc-ring {
+  width: 22px; height: 22px;
+  background: rgba(212, 175, 55, 0.28);
+}
+
+/* While the tour plays, the real cursor is irrelevant — dim the dev chrome. */
+body.is-attract #debug-panel { opacity: 0.25; }
+
+#tour-btn {
+  position: absolute;
+  right: 56px;
+  bottom: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 12px 26px;
+  font-family: var(--chrome-font);
+  background: rgba(11, 11, 12, 0.6);
+  border: 1.5px solid var(--gold-lo);
+  border-radius: 2px;
+  color: var(--cream);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: border-color 160ms ease, transform 120ms ease;
+}
+#tour-btn:hover { border-color: var(--gold); transform: translateY(-2px); }
+#tour-btn .es { font-size: 17px; }
+#tour-btn .en { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.6; }
+body.is-attract #tour-btn { opacity: 0.35; }
+body.is-portrait #tour-btn {
+  right: auto;
+  left: calc(var(--fx) + var(--fw) - 22px);
+  bottom: calc(var(--fy) + 30px);
+  transform: translateX(-100%);
+}
+body.is-portrait #tour-btn:hover { transform: translateX(-100%) translateY(-2px); }
+
 /* ── Accessibility ───────────────────────────────────────────────────────── */
 
 /* Visible focus on every piece of chrome, keyboard-only. */
