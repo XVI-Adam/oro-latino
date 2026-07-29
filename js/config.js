@@ -52,6 +52,34 @@ export const TRANSIENTS = Object.freeze({
 // The gate's opening rectangle (design px) — the storefront window it covers.
 export const GATE_RECT = Object.freeze({ x: 224, y: 150, w: 1400, h: 820 });
 
+// ─── Per-scene mobile framing ────────────────────────────────────────────────
+// On a portrait viewport the full 1848×1080 stage is cropped to one of these
+// design-space rects (9:16 ≈ 608×1080) and that rect is fitted to the screen —
+// so each scene keeps its own meaningful composition instead of shrinking to
+// an unreadable letterbox. Landscape always frames the full design space.
+export const FULL_FRAME = Object.freeze({ x: 0, y: 0, w: DESIGN.W, h: DESIGN.H });
+
+export const MOBILE_FRAMES = Object.freeze({
+  // centre of the gate: slats, handle and padlock
+  [STATES.GATE_CLOSED]:  { x: 620, y: 0, w: 608, h: 1080 },
+  [STATES.GATE_OPENING]: { x: 620, y: 0, w: 608, h: 1080 },
+  // the door plus a slice of the display window beside it
+  [STATES.STOREFRONT]:   { x: 1010, y: 0, w: 608, h: 1080 },
+  [STATES.ENTERING]:     { x: 700, y: 0, w: 608, h: 1080 },
+  // the wall cases and the counter below them
+  [STATES.INTERIOR]:     { x: 690, y: 0, w: 608, h: 1080 },
+  // a window onto the rail; it pans to follow the focused piece
+  [STATES.CASE_FOCUS]:   { x: 190, y: 0, w: 608, h: 1080 },
+  // the lifted chain; CSS re-seats the card as a bottom sheet in portrait
+  [STATES.PIECE_DETAIL]: { x: 300, y: 0, w: 608, h: 1080 },
+});
+
+/** The design-space rect to fit for `state` at the current orientation. */
+export function frameFor(state, portrait) {
+  if (!portrait) return FULL_FRAME;
+  return MOBILE_FRAMES[state] || FULL_FRAME;
+}
+
 // ─── Route index (the numbered walkthrough) ──────────────────────────────────
 // Each stop maps to the state it represents.
 export const ROUTE = [

@@ -59,6 +59,8 @@ export class Interior {
     this.far = new Layer();   // room shell, sticker wall, window, cases, rack
     this.near = new Layer();  // the counter in the foreground
 
+    this.keyFocus = null;   // hotspot id highlighted from the keyboard
+
     this._buildStickers();
     this._buildRack();
   }
@@ -156,7 +158,8 @@ export class Interior {
     // live details that must not be baked
     if (!blurring) {
       place(0, () => this._windowSweep(ctx, now));
-      if (hoverId) place(0, () => this._hover(ctx, hoverId, now));
+      const lit = hoverId || this.keyFocus;
+      if (lit) place(0, () => this._hover(ctx, lit, now));
     }
 
     const darken = cam?.darken ?? 0;

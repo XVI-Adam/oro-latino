@@ -73,8 +73,15 @@ class Chain {
 
     const scale = spec.scale ?? 1;         // overall size (storefront rail is smaller)
     const dropScale = spec.dropScale ?? 1; // lengthens the hang without fattening links
-    const N = 16 + Math.floor(rng() * 7);  // 16–22 particles
-    this.restLen = (26 + rng() * 12) * scale * dropScale; // segment length → chain drop
+    // Particle count scales with the device budget: fewer, longer segments on
+    // phones keeps the same silhouette and drape for a fraction of the work.
+    const quality = spec.quality ?? 1;
+    const baseN = 16 + Math.floor(rng() * 7);
+    const N = Math.max(9, Math.round(baseN * (0.55 + 0.45 * quality)));
+    // Longer segments compensate for fewer particles, so the drop is identical
+    // at every quality level — only the simulation cost changes.
+    const lenComp = (baseN - 1) / (N - 1);
+    this.restLen = (26 + rng() * 12) * scale * dropScale * lenComp;
     const sep = (20 + rng() * 8) * scale;  // gap between the two top pins
     this.sep = sep;
     this.pinL = { x: discX - sep / 2, y: discY };
@@ -165,11 +172,11 @@ class Chain {
   }
 
   /** Is (x,y) on the tag face? */
-  tagHit(x, y) {
+  tagHit(x, y, slop = 1) {
     const T = this.tag;
     if (!T) return false;
     const p = T.parts[1];
-    return Math.abs(x - p.x) <= T.w * 0.75 && Math.abs(y - p.y) <= T.h * 1.1;
+    return Math.abs(x - p.x) <= T.w * 0.75 * slop && Math.abs(y - p.y) <= T.h * 1.1 * slop;
   }
 
   // ── system 1: baked rest pose ───────────────────────────────────────────
@@ -292,7 +299,7 @@ class Chain {
   }
 
   // ── one simulation step for an awake chain ──────────────────────────────
-  step(dt, simTime, params, cursor) {
+  step(dt, simTime, params, cursor, iters = ITER) {
     const ke = this.energy();
     const assistK = params.settleSpring * clamp(1 - ke / KE_LIVELY, 0, 1);
     const breezeAccel = BREEZE_AMP * Math.sin(simTime * BREEZE_FREQ + this.phase);
@@ -300,7 +307,7 @@ class Chain {
       breezeAccel, assistK, laneWidth: params.laneWidth, damping: params.damping,
       cursor, cursorForce: params.cursorForce, cursorRadius: params.cursorRadius,
     });
-    this.satisfy(ITER);
+    this.satisfy(iters);
     this._stepTag(dt, params.damping);
   }
 
@@ -341,8 +348,8 @@ class Chain {
   wake() { this.sleepState = 'awake'; this.calmFrames = 0; }
 
   // ── grabbing ──────────────────────────────────────────────────────────
-  nearest(x, y) {
-    let best = -1, bd = GRAB_RADIUS * GRAB_RADIUS;
+  nearest(x, y, radius = GRAB_RADIUS) {
+    let best = -1, bd = radius * radius;
     for (let i = 1; i < this.particles.length - 1; i++) {
       const p = this.particles[i];
       const d = (p.x - x) ** 2 + (p.y - y) ** 2;
@@ -548,6 +555,7 @@ export class ChainRail {
     const {
       railY = 210, x0 = 150, x1 = DESIGN.W - 150, seed = 1337, scale = 1,
       dropScale = 1, pieces = null, tags = false,
+      quality = 1, reducedMotion = false, coarsePointer = false,
     } = opts;
     const count = pieces ? pieces.length : (opts.count ?? 22);
     this.stage = stage;
@@ -560,6 +568,13 @@ export class ChainRail {
     this.simTime = 0;
     this._acc = 0;
     this.params = { ...DEFAULT_PARAMS };
+    this.quality = quality;
+    this.reducedMotion = reducedMotion;
+    // Touch needs a far more forgiving target than a mouse cursor.
+    this.grabRadius = coarsePointer ? GRAB_RADIUS * 2.2 : GRAB_RADIUS;
+    this.tagSlop = coarsePointer ? 1.9 : 1;
+    this.iterations = quality < 0.7 ? 4 : ITER;
+    this.keyFocus = -1;
 
     const rng = mulberry32(seed); // deterministic layout every load
     this.chains = [];
@@ -573,13 +588,13 @@ export class ChainRail {
             style: CHAIN_STYLES.includes(piece.chain) ? piece.chain : 'rope',
             gauge: (piece.renderGauge ?? 1) * scale,
             pendantType: piece.pendant || null,
-            scale, dropScale, piece, tag: tags,
+            scale, dropScale, quality, piece, tag: tags,
           }
         : {
             style: CHAIN_STYLES[i % CHAIN_STYLES.length],
             gauge: (0.82 + rng() * 0.5) * scale,
             pendantType: pendants[i % pendants.length],
-            scale, dropScale, tag: tags,
+            scale, dropScale, quality, tag: tags,
           };
       this.chains.push(new Chain(i, x, this.railY, rng, spec));
     }
@@ -605,10 +620,19 @@ export class ChainRail {
     this.hoverTag = -1;
   }
 
+  /** Highlight a chain from the keyboard (mirrors the SR list's focus). */
+  setKeyboardFocus(i) {
+    if (this.keyFocus === i) return;
+    this.keyFocus = i;
+    if (i >= 0 && !this.reducedMotion) this.activate(i);
+    if (this.onKeyFocus) this.onKeyFocus(i);   // lets the mobile crop pan along
+  }
+
   /** Lift a chain forward for PIECE_DETAIL. */
   focus(i) {
     this.focusIndex = i;
-    this.focusT = 0;
+    // reduced motion: land already lifted, so the change is a crossfade
+    this.focusT = this.reducedMotion ? 1 : 0;
     this.activate(i);
   }
 
@@ -657,7 +681,7 @@ export class ChainRail {
   // ── input ───────────────────────────────────────────────────────────────
   /** Index of the chain whose price tag is under (x,y), or -1. */
   tagAt(x, y) {
-    for (const c of this.chains) if (c.tagHit(x, y)) return c.index;
+    for (const c of this.chains) if (c.tagHit(x, y, this.tagSlop)) return c.index;
     return -1;
   }
 
@@ -677,9 +701,10 @@ export class ChainRail {
       return true;
     }
 
-    let best = -1, bestP = -1, bd = GRAB_RADIUS * GRAB_RADIUS;
+    const R = this.grabRadius;
+    let best = -1, bestP = -1, bd = R * R;
     for (const c of this.chains) {
-      const i = c.nearest(x, y);
+      const i = c.nearest(x, y, R);
       if (i < 0) continue;
       const p = c.particles[i];
       const d = (p.x - x) ** 2 + (p.y - y) ** 2;
@@ -720,6 +745,20 @@ export class ChainRail {
   update(dt) {
     if (dt > 0) this.fps = this.fps ? this.fps * 0.9 + (1 / dt) * 0.1 : 1 / dt;
 
+    // Reduced motion: no swinging at all. Chains stay in their baked rest pose
+    // and scenes change by crossfade, so nothing moves that wasn't asked for.
+    if (this.reducedMotion) {
+      for (const i of [...this.active]) {
+        const c = this.chains[i];
+        if (c.grabbed < 0 && i !== this.focusIndex) {
+          c.finishSettle();
+          this.active.delete(i);
+          this._needsComposite = true;
+        }
+      }
+      return;
+    }
+
     // cursor swipe velocity fades when the mouse stops moving
     this.cursor.vx *= 0.8; this.cursor.vy *= 0.8;
 
@@ -734,7 +773,7 @@ export class ChainRail {
       this.simTime += FIXED;
       for (const i of this.active) {
         const c = this.chains[i];
-        if (c.sleepState === 'awake') c.step(FIXED, this.simTime, this.params, this.cursor);
+        if (c.sleepState === 'awake') c.step(FIXED, this.simTime, this.params, this.cursor, this.iterations);
       }
       this._acc -= FIXED;
       steps++;
@@ -817,6 +856,23 @@ export class ChainRail {
     if (this.hoverTag >= 0 && this.hoverTag !== this.focusIndex) {
       this.chains[this.hoverTag]._drawTag(ctx, true);   // highlight under cursor
     }
+    if (this.keyFocus >= 0) this._focusRing(ctx, this.chains[this.keyFocus], now);
+  }
+
+  /** Visible focus indicator for the keyboard-selected chain. */
+  _focusRing(ctx, c, now) {
+    if (!c) return;
+    let top = Infinity, bot = -Infinity;
+    for (const p of c.particles) { top = Math.min(top, p.y); bot = Math.max(bot, p.y); }
+    if (c.tag) bot = Math.max(bot, c.tag.parts[1].y + c.tag.h);
+    const halfW = Math.max(70, this.spacing * 0.46);
+    const a = 0.65 + 0.2 * Math.sin(now * 0.005);
+    ctx.save();
+    ctx.strokeStyle = `rgba(232,200,106,${a})`;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([9, 7]);
+    ctx.strokeRect(c.discX - halfW, top - 34, halfW * 2, (bot - top) + 60);
+    ctx.restore();
   }
 
   /**

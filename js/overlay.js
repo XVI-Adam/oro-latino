@@ -35,6 +35,13 @@ export class Overlay {
     for (const h of hotspots) {
       const el = document.createElement('div');
       el.className = 'case-label' + (h.to ? ' is-clickable' : '');
+      if (h.to) {
+        el.tabIndex = 0;
+        el.setAttribute('role', 'button');
+        el.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); this.onAction({ to: h.to }); }
+        });
+      }
       el.style.left = `${h.x + h.w / 2}px`;
       el.style.top = `${h.y + h.h + 14}px`;
       el.innerHTML = `<span class="es" lang="es">${h.es}</span>
@@ -69,6 +76,12 @@ export class Overlay {
       const li = document.createElement('li');
       li.className = 'route-stop';
       li.dataset.state = stop.state;
+      li.tabIndex = 0;
+      li.setAttribute('role', 'button');
+      li.setAttribute('aria-label', `${stop.num}. ${stop.es}. ${stop.en}.`);
+      li.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.onAction({ to: stop.state }); }
+      });
       li.innerHTML = `
         <span class="route-num">${stop.num}</span>
         <span class="route-name">

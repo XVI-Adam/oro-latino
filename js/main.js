@@ -1,7 +1,7 @@
 // main.js — bootstrap. Wires the stage, state machine, procedural gate,
 // renderer, DOM overlay, debug panel, and all pointer/scroll input.
 
-import { DESIGN, GATE_RECT, SCENES, STATES, TRANSIENTS } from './config.js';
+import { DESIGN, GATE_RECT, SCENES, STATES, TRANSIENTS, frameFor } from './config.js';
 import { Stage } from './stage.js';
 import { StateMachine } from './state.js';
 import { Gate } from './gate.js';
@@ -13,6 +13,8 @@ import { Storefront } from './storefront.js';
 import { Interior } from './interior.js';
 import { loadInventory, renderGauge } from './inventory.js';
 import { PieceCard } from './piececard.js';
+import { Accessibility } from './a11y.js';
+import { detectQuality, isCoarse, prefersReducedMotion, isPortrait, watchEnvironment } from './quality.js';
 import { Renderer } from './render.js';
 import { Overlay } from './overlay.js';
 import { DebugPanel } from './debug.js';
@@ -23,8 +25,17 @@ const canvas = document.getElementById('scene');
 const stage = new Stage(stageEl, canvas);
 const machine = new StateMachine();
 
+// Device capability probes — one read, shared by every subsystem.
+const QUALITY = detectQuality();
+const COARSE = isCoarse();
+let reducedMotion = prefersReducedMotion();
+document.body.dataset.quality = QUALITY.toFixed(2);
+document.body.classList.toggle('is-coarse', COARSE);
+document.body.classList.toggle('is-reduced', reducedMotion);
+
 // The signature interaction. Latching fully open advances to the storefront.
 const gate = new Gate({ ...GATE_RECT }, () => machine.go(STATES.STOREFRONT));
+gate.reducedMotion = reducedMotion;
 
 // Asset pipeline (empty manifest → all procedural, zero required images) and the
 // procedural jewelry renderer that draws chains, pendants, and ring/bangle art.
@@ -39,6 +50,7 @@ for (const p of inventory.pieces) p.renderGauge = renderGauge(p);
 const chainRail = new ChainRail(stage, jewelry, (i) => openPiece(i), {
   railY: 158, x0: 190, x1: DESIGN.W - 190, seed: 1337, scale: 1.22, dropScale: 1.45,
   pieces: inventory.pieces, tags: true,
+  quality: QUALITY, reducedMotion, coarsePointer: COARSE,
 });
 
 // The handwritten-tag detail card (DOM chrome over the lifted chain).
@@ -60,6 +72,7 @@ chainTuner.hide();
 // layered scene — sign, trays, bangles, glass, and the draggable entry door.
 const windowChains = new ChainRail(stage, jewelry, () => {}, {
   railY: 265, x0: 320, x1: 1330, count: 13, seed: 4242, scale: 0.7,
+  quality: QUALITY, reducedMotion, coarsePointer: COARSE,
 });
 const storefront = new Storefront({ ...GATE_RECT }, windowChains, jewelry,
   () => machine.go(STATES.ENTERING));
@@ -76,6 +89,7 @@ overlay.setHotspots(interior.hotspots);
 
 // Keep the DOM chrome in step with the camera: it can't zoom with the canvas,
 // so fade it out while a transition is running.
+renderer.reducedMotion = reducedMotion;
 renderer.onCamera = (t) => overlay.setChromeFade(t);
 new DebugPanel(machine, (state) => machine.go(state));
 
@@ -85,8 +99,28 @@ const isCaseState = () => machine.state === STATES.CASE_FOCUS;
 const isStorefront = () => machine.state === STATES.STOREFRONT;
 const isInterior = () => machine.state === STATES.INTERIOR;
 
+// ── per-scene mobile framing ────────────────────────────────────────────────
+// Portrait crops the design space to the scene's own 9:16 rect; landscape
+// frames the whole stage. In CASE_FOCUS the crop pans to the selected piece so
+// every chain is reachable on a phone.
+function applyFrame() {
+  const portrait = isPortrait();
+  document.body.classList.toggle('is-portrait', portrait);
+  const base = frameFor(machine.state, portrait);
+  if (!portrait) { stage.setFrame(base); return; }
+  if (machine.state === STATES.CASE_FOCUS) {
+    const i = chainRail.keyFocus >= 0 ? chainRail.keyFocus : 0;
+    const cx = chainRail.chains[i].discX;
+    const x = Math.max(0, Math.min(DESIGN.W - base.w, cx - base.w / 2));
+    stage.setFrame({ ...base, x });
+    return;
+  }
+  stage.setFrame(base);
+}
+
 machine.onChange((state) => {
   overlay.update(state);
+  applyFrame();
   hoverId = null;
   overlay.setHotspotHover(null);
   canvas.style.cursor = 'default';
@@ -250,6 +284,47 @@ machine.go(STATES.GATE_CLOSED);
 renderer.start();
 
 // Handy for console poking during development.
+// ── accessibility: keyboard path + parallel screen-reader lists ────────────
+const a11y = new Accessibility({
+  machine, chainRail, interior, inventory,
+  actions: {
+    openGate: () => { if (isGateState()) gate.autoOpen(); },
+    enterShop: () => { if (isStorefront()) machine.go(STATES.ENTERING); },
+    openCase: (i) => {
+      const spot = interior.hotspots[i];
+      if (!spot) return;
+      if (spot.to) {
+        if (renderer.camera.kind === 'zoom') return;
+        renderer.beginCaseZoom(spot, () => machine.go(spot.to));
+      } else {
+        a11y.say(`${spot.es}. ${spot.en}. Próximamente. Coming soon.`);
+      }
+    },
+    openPiece: (i) => openPiece(i),
+    back: () => {
+      const s = machine.state;
+      if (s === STATES.PIECE_DETAIL) { machine.go(STATES.CASE_FOCUS); return true; }
+      if (s === STATES.CASE_FOCUS) { machine.go(STATES.INTERIOR); return true; }
+      if (s === STATES.INTERIOR) { machine.go(STATES.STOREFRONT); return true; }
+      return false;
+    },
+  },
+});
+machine.onChange((state) => a11y.syncTo(state));
+chainRail.onKeyFocus = () => applyFrame();   // portrait crop follows the selection
+a11y.syncTo(machine.state);
+
+applyFrame();
+watchEnvironment(() => {
+  reducedMotion = prefersReducedMotion();
+  document.body.classList.toggle('is-reduced', reducedMotion);
+  gate.reducedMotion = reducedMotion;
+  renderer.reducedMotion = reducedMotion;
+  chainRail.reducedMotion = reducedMotion;
+  windowChains.reducedMotion = reducedMotion;
+  applyFrame();
+});
+
 window.OroLatino = {
   stage, machine, gate, chainRail, windowChains, storefront, interior,
   inventory, pieceCard, jewelry, assets, renderer,

@@ -29,6 +29,7 @@ export class Gate {
     this.dragging = false;
     this.hand = 0;       // pointer target while dragging
     this.opened = false;
+    this.reducedMotion = false; // set by main.js; disables shake/rattle
     this.shake = 0;      // 0→1, decays; drives screen shake
     this.rattle = 0;     // 0→1, decays; drives per-slat jitter
 
@@ -53,10 +54,19 @@ export class Gate {
     this.rattle = 0;
   }
 
-  /** Motorized assist (accessibility / the Abrir button): kick past the tip. */
+  /**
+   * Motorized assist — the keyboard path (Enter / ↑) and the Abrir button.
+   * Under reduced motion it simply glides open with no bounce or shake.
+   */
   autoOpen() {
     if (this.opened) return;
     this.dragging = false;
+    if (this.reducedMotion) {
+      this.vel = 1.2;
+      this.rattle = 0;
+      this.shake = 0;
+      return;
+    }
     this.vel = Math.max(this.vel, 2.8);
     this.rattle = Math.max(this.rattle, 0.45);
   }
@@ -142,7 +152,7 @@ export class Gate {
 
   /** Random screen-shake offset for this frame (design px). */
   shakeOffset() {
-    if (this.shake <= 0) return { x: 0, y: 0 };
+    if (this.reducedMotion || this.shake <= 0) return { x: 0, y: 0 };
     const m = this.shake * 15;
     return { x: (Math.random() * 2 - 1) * m, y: (Math.random() * 2 - 1) * m * 0.7 };
   }

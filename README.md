@@ -130,6 +130,35 @@ chains hang, their link style, visual gauge (derived from the real `gauge_mm`),
 and pendant. `js/inventory.js` loads it and falls back to a small built-in set
 if the file is missing, so the page still runs.
 
+## Phones & accessibility
+
+- **Per-scene mobile framing** — in portrait the design space is cropped to the
+  scene's own **9:16 rect** (`MOBILE_FRAMES` in `config.js`) and that rect is
+  fitted to the screen, so every scene keeps a meaningful composition instead of
+  shrinking to a letterboxed sliver. `stage.js` fits any design-space rect and
+  publishes it as `--fx/--fy/--fw/--fh`, which portrait chrome positions against.
+  In the chain case the crop **pans to the selected piece**, so all 14 are
+  reachable on a phone.
+- **Touch** — `touch-action: none` on the canvas so drags drive the gate and
+  chains, never the page; grab radius ×2.2 and tag hit slop ×1.9 on coarse
+  pointers, and larger buttons via `body.is-coarse`.
+- **Performance heuristic** (`js/quality.js`) — dpr, screen area, core count and
+  input type produce a 0.45–1 budget. Chains cut particle counts (21 → 16) and
+  relaxation iterations (6 → 4) accordingly, with segment length compensating so
+  the drape is identical at every quality level. Device pixel ratio is capped at
+  2.5.
+- **Full keyboard path** — `Enter`/`Space` opens the gate, steps inside, and
+  opens the focused case or piece; `←`/`→` move between wall cases or pieces;
+  `↑`/`↓` walk the route; `Escape` backs out. Nothing essential is behind a drag.
+- **Screen readers** — every piece exists as a real focusable button in a
+  parallel DOM list carrying the same bilingual copy the canvas shows, plus a
+  polite live region narrating each move. Focusing an item brings it on screen.
+- **`prefers-reduced-motion`** — physics is swapped for gentle crossfades: chains
+  hold their baked rest pose (a fling moves nothing), the gate glides open with
+  no bounce or shake, and the dolly/zoom become dissolves.
+- **Visible focus** — `:focus-visible` gold outlines on all chrome; the
+  keyboard-selected chain gets a dashed focus ring drawn on the canvas.
+
 ## Cinematics, shadows & compositing
 
 - **Transitions** (`js/camera.js`) — `STOREFRONT → INTERIOR` is a **push-in

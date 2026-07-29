@@ -36,6 +36,9 @@ export class Renderer {
     this.camera.start('dolly', durationMs, focus);
   }
 
+  /** Reduced motion: no scaling push — the scenes simply crossfade. */
+  get crossfade() { return !!this.reducedMotion; }
+
   /** Smooth zoom toward a clicked case; `onDone` commits the state change. */
   beginCaseZoom(hotspot, onDone, durationMs = 620) {
     this.zoomRect = { x: hotspot.x, y: hotspot.y, w: hotspot.w, h: hotspot.h };
@@ -90,32 +93,44 @@ export class Renderer {
     // ── storefront → interior: push-in dolly with layer parallax ──────────
     if (state === STATES.ENTERING && this.interior) {
       const p = cam.kind === 'dolly' ? cam.p : this.machine.transitionProgress(now);
-      // The room comes forward from behind, nearer layers growing faster.
-      this.interior.draw(ctx, now, null, dpr, {
-        scale: 0.84 + 0.16 * p,
-        parallax: 0.16 * (1 - p),
-        focus: cam.focus,
-      });
-      // We pass through the storefront: it scales up past us and fades out.
-      ctx.save();
-      ctx.globalAlpha = Math.max(0, 1 - p * 1.25);
-      cam.applyLayer(ctx, 1 + 1.7 * p);
-      if (this.storefront) this.storefront.draw(ctx, now, 1, dpr);
-      ctx.restore();
+      if (this.crossfade) {
+        // Reduced motion: hold both scenes still and dissolve between them.
+        this.interior.draw(ctx, now, null, dpr, null);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1 - p);
+        if (this.storefront) this.storefront.draw(ctx, now, 1, dpr);
+        ctx.restore();
+      } else {
+        // The room comes forward from behind, nearer layers growing faster.
+        this.interior.draw(ctx, now, null, dpr, {
+          scale: 0.84 + 0.16 * p,
+          parallax: 0.16 * (1 - p),
+          focus: cam.focus,
+        });
+        // We pass through the storefront: it scales up past us and fades out.
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1 - p * 1.25);
+        cam.applyLayer(ctx, 1 + 1.7 * p);
+        if (this.storefront) this.storefront.draw(ctx, now, 1, dpr);
+        ctx.restore();
+      }
     }
 
     // ── interior (steady, or zooming toward a case) ───────────────────────
     if (state === STATES.INTERIOR && this.interior) {
       const zooming = cam.kind === 'zoom';
       const p = zooming ? cam.p : 0;
-      this.interior.draw(ctx, now, zooming ? null : (this.getHover ? this.getHover() : null), dpr, {
-        scale: 1 + 1.9 * p,
-        parallax: 0.28 * p,          // the counter rushes past faster than the wall
-        focus: cam.focus,
-        blur: 11 * p,
-        darken: 0.62 * p,
-        focusRect: this.zoomRect,
-      });
+      const hov = zooming ? null : (this.getHover ? this.getHover() : null);
+      this.interior.draw(ctx, now, hov, dpr, this.crossfade
+        ? { darken: 0.62 * p }       // reduced motion: dissolve, don't push in
+        : {
+            scale: 1 + 1.9 * p,
+            parallax: 0.28 * p,      // the counter rushes past faster than the wall
+            focus: cam.focus,
+            blur: 11 * p,
+            darken: 0.62 * p,
+            focusRect: this.zoomRect,
+          });
     }
 
     // The lifted chain sits over the dimmed case it came from.
