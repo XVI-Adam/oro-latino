@@ -40,6 +40,16 @@ single CSS transform and letterboxed (`js/stage.js`).
   back down and bounces on the sill; cross the tip and it snaps home, latches,
   screen-shakes, and advances to `STOREFRONT`. No images. See the header comment
   in `gate.js` for the model.
+- **The storefront** (`js/storefront.js`) — `00 · La Vitrina / The Window`,
+  drawn in layers: black fascia sign (gold "ORO LATINO INC.", white phone,
+  rayed diamond mark), the display window with a **second, smaller chain rail**
+  (the same Verlet sim at 0.7 scale) up top and procedural displays below —
+  black/cream ring trays, a navy tray of green/red stone pieces, a bangle
+  cluster — plus night atmosphere: warm glow, sidewalk light spill, and a
+  drifting translucent gradient sweep as the street's reflection on the glass.
+  The gate reveals this scene as it rises (glow scales with gate height). A
+  glass **door** on the right swings open by dragging its edge (spring physics
+  with a tipping point, like the gate) or scrolling → `ENTERING → INTERIOR`.
 - **The chains** (`js/chains.js`) — the `CASE_FOCUS` scene is a rail of 22
   draggable gold chains simulated with **Verlet integration** (16–22 particles,
   pinned at both top ends, 6 relaxation iterations, heavy tip pendant via

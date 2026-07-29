@@ -55,7 +55,7 @@ export const GATE_RECT = Object.freeze({ x: 224, y: 150, w: 1400, h: 820 });
 // ─── Route index (the numbered walkthrough) ──────────────────────────────────
 // Each stop maps to the state it represents.
 export const ROUTE = [
-  { num: '00', es: 'La Vitrina', en: 'The Storefront', state: STATES.STOREFRONT },
+  { num: '00', es: 'La Vitrina', en: 'The Window', state: STATES.STOREFRONT },
   { num: '01', es: 'Adentro',    en: 'Inside',         state: STATES.INTERIOR },
   { num: '02', es: 'Cadenas',    en: 'The Chain Case', state: STATES.CASE_FOCUS },
 ];
@@ -70,7 +70,7 @@ export const SCENES = {
   // no placeholder boxes of its own.
   [STATES.GATE_CLOSED]: {
     backdrop: 'fascia',
-    plate: { num: '00', es: 'La Vitrina', en: 'The Storefront' },
+    plate: { num: '00', es: 'La Vitrina', en: 'The Window' },
     boxes: [],
     hint: { es: 'Arrastra o desplaza hacia arriba', en: 'Drag or scroll up to open' },
     actions: [{ label_es: 'Abrir', label_en: 'Open', command: 'gate-open', primary: true }],
@@ -78,19 +78,17 @@ export const SCENES = {
 
   [STATES.GATE_OPENING]: {
     backdrop: 'fascia',
-    plate: { num: '00', es: 'La Vitrina', en: 'The Storefront' },
+    plate: { num: '00', es: 'La Vitrina', en: 'The Window' },
     boxes: [],
     actions: [],
   },
 
+  // Drawn entirely by storefront.js (sign, window, displays, door, glass).
   [STATES.STOREFRONT]: {
     backdrop: 'fascia',
-    plate: { num: '00', es: 'La Vitrina', en: 'The Storefront' },
-    boxes: [
-      { id: 'window',  x: 224, y: 150, w: 1400, h: 820, es: 'Vitrina', en: 'Window' },
-      { id: 'display', x: 314, y: 320, w: 1220, h: 520, es: 'Exhibición', en: 'Display' },
-      { id: 'sign',    x: 574, y: 40,  w: 700,  h: 92,  es: 'Letrero', en: 'Sign' },
-    ],
+    plate: { num: '00', es: 'La Vitrina', en: 'The Window' },
+    boxes: [],
+    hint: { es: 'Arrastra la puerta o desplázate', en: 'Drag the door or scroll' },
     actions: [{ label_es: 'Entrar', label_en: 'Enter', to: STATES.ENTERING, primary: true }],
   },
 

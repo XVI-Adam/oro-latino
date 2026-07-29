@@ -70,9 +70,10 @@ class Chain {
     this.gauge = spec.gauge;               // per-chain link thickness
     this.pendantType = spec.pendantType;   // cross/crucifix/medallion/tablet/null
 
+    const scale = spec.scale ?? 1;         // overall size (storefront rail is smaller)
     const N = 16 + Math.floor(rng() * 7);  // 16–22 particles
-    this.restLen = 26 + rng() * 12;        // segment length → varied chain drops
-    const sep = 20 + rng() * 8;            // gap between the two top pins
+    this.restLen = (26 + rng() * 12) * scale; // segment length → varied chain drops
+    const sep = (20 + rng() * 8) * scale;  // gap between the two top pins
     this.sep = sep;
     this.pinL = { x: discX - sep / 2, y: discY };
     this.pinR = { x: discX + sep / 2, y: discY };
@@ -377,31 +378,33 @@ export class ChainRail {
    * @param {Jewelry} jewelry
    * @param {(index:number)=>void} onTap
    */
-  constructor(stage, jewelry, onTap) {
+  constructor(stage, jewelry, onTap, opts = {}) {
+    const { railY = 210, x0 = 150, x1 = DESIGN.W - 150, count = 22, seed = 1337, scale = 1 } = opts;
     this.stage = stage;
     this.jewelry = jewelry;
     this.onTap = onTap || (() => {});
     this.debug = false;
-    this.railY = 210;
+    this.railY = railY;
+    this.x0 = x0;
+    this.x1 = x1;
     this.simTime = 0;
     this._acc = 0;
     this.params = { ...DEFAULT_PARAMS };
 
-    const rng = mulberry32(1337); // deterministic layout every load
+    const rng = mulberry32(seed); // deterministic layout every load
     this.chains = [];
-    const COUNT = 22;
-    const x0 = 150, x1 = DESIGN.W - 150;
     const pendants = [...PENDANT_TYPES, null, null];
-    for (let i = 0; i < COUNT; i++) {
-      const x = x0 + (x1 - x0) * (i / (COUNT - 1));
+    for (let i = 0; i < count; i++) {
+      const x = x0 + (x1 - x0) * (i / (count - 1));
       const spec = {
         style: CHAIN_STYLES[i % CHAIN_STYLES.length],
-        gauge: 0.82 + rng() * 0.5,
+        gauge: (0.82 + rng() * 0.5) * scale,
         pendantType: pendants[i % pendants.length],
+        scale,
       };
       this.chains.push(new Chain(i, x, this.railY, rng, spec));
     }
-    this.spacing = (x1 - x0) / (COUNT - 1);
+    this.spacing = (x1 - x0) / (count - 1);
 
     // Live set = chains that are awake or settling (simulated + drawn on top).
     this.active = new Set();
@@ -595,13 +598,14 @@ export class ChainRail {
 
   _rail(ctx) {
     const y = this.railY;
+    const rx = this.x0 - 70, rw = (this.x1 - this.x0) + 140;
     const g = ctx.createLinearGradient(0, y - 30, 0, y - 6);
     g.addColorStop(0, '#3a3f49');
     g.addColorStop(1, '#14171d');
     ctx.fillStyle = g;
-    ctx.fillRect(60, y - 30, DESIGN.W - 120, 24);
+    ctx.fillRect(rx, y - 30, rw, 24);
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
-    ctx.fillRect(60, y - 30, DESIGN.W - 120, 3);
+    ctx.fillRect(rx, y - 30, rw, 3);
   }
 
   _hud(ctx) {

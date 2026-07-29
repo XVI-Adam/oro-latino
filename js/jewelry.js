@@ -273,7 +273,7 @@ export class Jewelry {
   }
 
   // ── ring & bangle primitives (for later cases) ──────────────────────────
-  ring(ctx, x, y, r, { gauge = 1, gem = true } = {}) {
+  ring(ctx, x, y, r, { gauge = 1, gem = true, gemColor = '#E23A2E' } = {}) {
     this._checkDpr();
     if (this.reg.has('ring:solitaire')) {
       const img = this.reg.cutout('ring:solitaire');
@@ -292,7 +292,7 @@ export class Jewelry {
     if (gem) {
       ctx.translate(x, y - r);
       ctx.rotate(Math.PI / 4);
-      ctx.fillStyle = '#E23A2E';
+      ctx.fillStyle = gemColor;
       const s = 6 * gauge; ctx.fillRect(-s / 2, -s / 2, s, s);
       ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillRect(-s / 2, -s / 2, s / 2, s / 2);
     }

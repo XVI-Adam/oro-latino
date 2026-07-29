@@ -9,12 +9,13 @@ export class Renderer {
    * @param {StateMachine} machine
    * @param {() => string|null} getHover  id of hovered interactive box, or null
    */
-  constructor(stage, machine, getHover, gate, chainRail) {
+  constructor(stage, machine, getHover, gate, chainRail, storefront) {
     this.stage = stage;
     this.machine = machine;
     this.getHover = getHover;
     this.gate = gate;
     this.chainRail = chainRail;
+    this.storefront = storefront;
     this._raf = null;
     this._last = 0;
     this._loop = this._loop.bind(this);
@@ -28,6 +29,7 @@ export class Renderer {
     this._last = now;
     if (this.gate && this._isGateState()) this.gate.update(dt);
     if (this.chainRail && this.machine.state === STATES.CASE_FOCUS) this.chainRail.update(dt);
+    if (this.storefront && this.machine.state === STATES.STOREFRONT) this.storefront.update(dt);
     this.draw(now);
     this._raf = requestAnimationFrame(this._loop);
   }
@@ -46,6 +48,9 @@ export class Renderer {
 
     this._backdrop(ctx, scene.backdrop);
 
+    if (this.machine.state === STATES.STOREFRONT && this.storefront) {
+      this.storefront.draw(ctx, now, 1);
+    }
     if (this.machine.state === STATES.CASE_FOCUS && this.chainRail) {
       this.chainRail.draw(ctx, now);
     }
@@ -73,8 +78,8 @@ export class Renderer {
     ctx.translate(shake.x, shake.y);
 
     this._backdrop(ctx, 'fascia');
-    // Reveal-behind: the actual storefront placeholders.
-    for (const box of SCENES[STATES.STOREFRONT].boxes) this._box(ctx, box, false);
+    // Reveal-behind: the real storefront, its glow scaling with the gate.
+    if (this.storefront) this.storefront.draw(ctx, now, this.gate.pos);
 
     this.gate.draw(ctx, now);
     ctx.restore();
