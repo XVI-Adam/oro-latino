@@ -118,13 +118,11 @@ export const SCENES = {
     actions: [{ label_es: 'Volver', label_en: 'Back', to: STATES.INTERIOR }],
   },
 
+  // The lifted chain is drawn by chains.js; the card is DOM (piececard.js).
   [STATES.PIECE_DETAIL]: {
     backdrop: 'felt',
     plate: { num: '02', es: 'La Pieza', en: 'The Piece' },
-    boxes: [
-      { id: 'piece', x: 700, y: 180, w: 440, h: 720, es: 'Pieza', en: 'Piece' },
-      { id: 'tag',   x: 1240, y: 360, w: 380, h: 260, es: 'Etiqueta de precio', en: 'Price tag' },
-    ],
+    boxes: [],
     actions: [{ label_es: 'Volver', label_en: 'Back', to: STATES.CASE_FOCUS }],
   },
 };

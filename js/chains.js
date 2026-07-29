@@ -37,9 +37,10 @@ const BREEZE_FREQ = 0.9;   // rad/s
 const CURSOR_SWIPE = 9;    // how strongly cursor motion drags nearby particles
 
 const DEFAULT_PARAMS = {
-  damping: 0.985,          // velocity retained per step
+  damping: 0.981,          // velocity retained per step (tuned for the long case chains)
   settleSpring: 34,        // settle-assist stiffness at zero energy (px/s² per px)
-  sleepThreshold: 0.08,    // avg per-particle energy below which a chain is calm
+  sleepThreshold: 0.18,    // avg per-particle energy below which a chain is calm
+                           // (~27 px/s drift — the 300ms eased blend hides it)
   laneWidth: 90,           // ± lane half-width around the disc (px)
   cursorForce: 2100,       // hover repulsion strength at the cursor (px/s²)
   cursorRadius: 160,       // hover influence radius (px)
@@ -71,8 +72,9 @@ class Chain {
     this.pendantType = spec.pendantType;   // cross/crucifix/medallion/tablet/null
 
     const scale = spec.scale ?? 1;         // overall size (storefront rail is smaller)
+    const dropScale = spec.dropScale ?? 1; // lengthens the hang without fattening links
     const N = 16 + Math.floor(rng() * 7);  // 16–22 particles
-    this.restLen = (26 + rng() * 12) * scale; // segment length → varied chain drops
+    this.restLen = (26 + rng() * 12) * scale * dropScale; // segment length → chain drop
     const sep = (20 + rng() * 8) * scale;  // gap between the two top pins
     this.sep = sep;
     this.pinL = { x: discX - sep / 2, y: discY };
@@ -106,7 +108,68 @@ class Chain {
     this.blendFrom = null;
     this.blendT = 0;
 
+    // Price tag: a short Verlet pendulum tied to one strand of the chain.
+    this.piece = spec.piece || null;
+    if (spec.tag !== false) this._buildTag(scale, rng);
+
     this._bakeRestPose();
+  }
+
+  _buildTag(scale, rng) {
+    // tie it partway down one strand so it hangs clear of the pendant
+    const anchorIdx = Math.max(1, Math.round(this.pendant * (0.52 + rng() * 0.12)));
+    const a = this.particles[anchorIdx];
+    const len = 20 * scale;
+    this.tag = {
+      anchorIdx,
+      len,
+      w: 58 * scale,
+      h: 38 * scale,
+      parts: [
+        { x: a.x, y: a.y + len, px: a.x, py: a.y + len },
+        { x: a.x, y: a.y + len * 2, px: a.x, py: a.y + len * 2 },
+      ],
+    };
+  }
+
+  /** One Verlet step for the tag pendulum (runs after the chain has settled). */
+  _stepTag(dt, damping) {
+    const T = this.tag;
+    if (!T) return;
+    const g = GRAVITY * 0.6 * dt * dt;
+    for (const p of T.parts) {
+      const vx = (p.x - p.px) * damping;
+      const vy = (p.y - p.py) * damping;
+      p.px = p.x; p.py = p.y;
+      p.x += vx;
+      p.y += vy + g;
+    }
+    const A = this.particles[T.anchorIdx];
+    for (let k = 0; k < 4; k++) {
+      this._tie(A, T.parts[0], T.len, false);   // anchor is driven by the chain
+      this._tie(T.parts[0], T.parts[1], T.len, true);
+    }
+  }
+
+  /** Distance constraint; `moveA` false pins the first point. */
+  _tie(a, b, rest, moveA) {
+    let dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.hypot(dx, dy) || 1e-6;
+    const diff = (d - rest) / d;
+    if (moveA) {
+      a.x += dx * diff * 0.5; a.y += dy * diff * 0.5;
+      b.x -= dx * diff * 0.5; b.y -= dy * diff * 0.5;
+    } else {
+      b.x -= dx * diff; b.y -= dy * diff;
+    }
+  }
+
+  /** Is (x,y) on the tag face? */
+  tagHit(x, y) {
+    const T = this.tag;
+    if (!T) return false;
+    const p = T.parts[1];
+    return Math.abs(x - p.x) <= T.w * 0.75 && Math.abs(y - p.y) <= T.h * 1.1;
   }
 
   // ── system 1: baked rest pose ───────────────────────────────────────────
@@ -116,9 +179,14 @@ class Chain {
     for (let i = 0; i < BAKE_MAX; i++) {
       this.integrate(FIXED, {});
       this.satisfy(ITER);
+      this._stepTag(FIXED, 0.96);
       if (i > 40 && this.energy() < 1e-5) break;
     }
     for (const p of this.particles) { p.px = p.x; p.py = p.y; }
+    if (this.tag) {
+      for (const p of this.tag.parts) { p.px = p.x; p.py = p.y; }
+      this.tag.rest = this.tag.parts.map((p) => ({ x: p.x, y: p.y }));
+    }
     this.restPose = this.particles.map((p) => ({ x: p.x, y: p.y }));
     this._buildCrossPairs();
     this.sleepState = 'asleep';
@@ -233,6 +301,7 @@ class Chain {
       cursor, cursorForce: params.cursorForce, cursorRadius: params.cursorRadius,
     });
     this.satisfy(ITER);
+    this._stepTag(dt, params.damping);
   }
 
   // ── system 3: sleep blend ───────────────────────────────────────────────
@@ -258,6 +327,12 @@ class Chain {
     const P = this.particles, rp = this.restPose;
     for (let i = 0; i < P.length; i++) {
       P[i].x = rp[i].x; P[i].y = rp[i].y; P[i].px = rp[i].x; P[i].py = rp[i].y;
+    }
+    if (this.tag && this.tag.rest) {
+      this.tag.parts.forEach((p, i) => {
+        p.x = this.tag.rest[i].x; p.y = this.tag.rest[i].y;
+        p.px = p.x; p.py = p.y;
+      });
     }
     this.sleepState = 'asleep';
     this.calmFrames = 0;
@@ -320,6 +395,57 @@ class Chain {
       jewelry.ao(ctx, p.x, p.y + 16 * this.gauge, 20 * this.gauge, 8 * this.gauge, 0.5);
       jewelry.stampPendant(ctx, this.pendantType, p.x, p.y, ang, this.gauge);
     }
+    this._drawTag(ctx);
+  }
+
+  /** Small white price tag swinging on its string. */
+  _drawTag(ctx, highlight = false) {
+    const T = this.tag;
+    if (!T) return;
+    const A = this.particles[T.anchorIdx];
+    const a = T.parts[0], b = T.parts[1];
+
+    // string
+    ctx.beginPath();
+    ctx.moveTo(A.x, A.y);
+    ctx.lineTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.strokeStyle = 'rgba(238,232,216,0.72)';
+    ctx.lineWidth = Math.max(1, 1.6 * this.gauge);
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    const ang = Math.atan2(b.y - a.y, b.x - a.x) - Math.PI / 2;
+    const w = T.w, h = T.h;
+
+    ctx.save();
+    ctx.translate(b.x, b.y + h * 0.42);
+    ctx.rotate(ang);
+
+    // cast shadow so the tag sits off the felt
+    ctx.fillStyle = 'rgba(0,0,0,0.30)';
+    ctx.fillRect(-w / 2 + 3, -h / 2 + 5, w, h);
+
+    // paper
+    ctx.fillStyle = highlight ? '#FFFFFF' : '#F6F2E6';
+    ctx.fillRect(-w / 2, -h / 2, w, h);
+    ctx.strokeStyle = highlight ? 'rgba(212,175,55,0.95)' : 'rgba(120,105,70,0.45)';
+    ctx.lineWidth = highlight ? 2.2 : 1;
+    ctx.strokeRect(-w / 2, -h / 2, w, h);
+
+    // punched hole + a hint of writing
+    ctx.beginPath();
+    ctx.arc(0, -h / 2 + h * 0.17, h * 0.09, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(90,78,50,0.55)';
+    ctx.fill();
+
+    const label = this.piece && this.piece.price ? this.piece.price : '$ ?';
+    ctx.fillStyle = '#2A2417';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `600 ${Math.round(h * 0.34)}px ui-monospace, Menlo, monospace`;
+    ctx.fillText(label, 0, h * 0.16);
+    ctx.restore();
   }
 
   /**
@@ -419,7 +545,11 @@ export class ChainRail {
    * @param {(index:number)=>void} onTap
    */
   constructor(stage, jewelry, onTap, opts = {}) {
-    const { railY = 210, x0 = 150, x1 = DESIGN.W - 150, count = 22, seed = 1337, scale = 1 } = opts;
+    const {
+      railY = 210, x0 = 150, x1 = DESIGN.W - 150, seed = 1337, scale = 1,
+      dropScale = 1, pieces = null, tags = false,
+    } = opts;
+    const count = pieces ? pieces.length : (opts.count ?? 22);
     this.stage = stage;
     this.jewelry = jewelry;
     this.onTap = onTap || (() => {});
@@ -436,12 +566,21 @@ export class ChainRail {
     const pendants = [...PENDANT_TYPES, null, null];
     for (let i = 0; i < count; i++) {
       const x = x0 + (x1 - x0) * (i / (count - 1));
-      const spec = {
-        style: CHAIN_STYLES[i % CHAIN_STYLES.length],
-        gauge: (0.82 + rng() * 0.5) * scale,
-        pendantType: pendants[i % pendants.length],
-        scale,
-      };
+      const piece = pieces ? pieces[i] : null;
+      // With inventory loaded, every visual property comes from the data.
+      const spec = piece
+        ? {
+            style: CHAIN_STYLES.includes(piece.chain) ? piece.chain : 'rope',
+            gauge: (piece.renderGauge ?? 1) * scale,
+            pendantType: piece.pendant || null,
+            scale, dropScale, piece, tag: tags,
+          }
+        : {
+            style: CHAIN_STYLES[i % CHAIN_STYLES.length],
+            gauge: (0.82 + rng() * 0.5) * scale,
+            pendantType: pendants[i % pendants.length],
+            scale, dropScale, tag: tags,
+          };
       this.chains.push(new Chain(i, x, this.railY, rng, spec));
     }
     this.spacing = (x1 - x0) / (count - 1);
@@ -459,7 +598,21 @@ export class ChainRail {
     this.lctx = this.layer.getContext('2d');
     this._layerDpr = 0;
     this._needsComposite = true;
+
+    // PIECE_DETAIL: the selected chain lifts forward and centers.
+    this.focusIndex = -1;
+    this.focusT = 0;
+    this.hoverTag = -1;
   }
+
+  /** Lift a chain forward for PIECE_DETAIL. */
+  focus(i) {
+    this.focusIndex = i;
+    this.focusT = 0;
+    this.activate(i);
+  }
+
+  unfocus() { this.focusIndex = -1; this.focusT = 0; }
 
   // ── wake / sleep set management ─────────────────────────────────────────
   _neighbors(i) {
@@ -502,9 +655,28 @@ export class ChainRail {
   clearCursor() { this.cursor.active = false; this.cursor.vx = 0; this.cursor.vy = 0; }
 
   // ── input ───────────────────────────────────────────────────────────────
+  /** Index of the chain whose price tag is under (x,y), or -1. */
+  tagAt(x, y) {
+    for (const c of this.chains) if (c.tagHit(x, y)) return c.index;
+    return -1;
+  }
+
   pointerDown(x, y) {
     this._downX = x; this._downY = y; this._moved = 0;
     this.clearCursor(); // the grab drives motion during a drag, not the field
+
+    // A tag is a bigger, friendlier target than the chain itself; grabbing it
+    // grabs the strand it hangs from, so a drag still swings the piece.
+    const tagged = this.tagAt(x, y);
+    if (tagged >= 0) {
+      const c = this.chains[tagged];
+      this.activate(tagged);
+      c.grab(c.tag.anchorIdx, c.particles[c.tag.anchorIdx].x, c.particles[c.tag.anchorIdx].y);
+      this.dragging = true;
+      this.dragChain = tagged;
+      return true;
+    }
+
     let best = -1, bestP = -1, bd = GRAB_RADIUS * GRAB_RADIUS;
     for (const c of this.chains) {
       const i = c.nearest(x, y);
@@ -551,6 +723,11 @@ export class ChainRail {
     // cursor swipe velocity fades when the mouse stops moving
     this.cursor.vx *= 0.8; this.cursor.vy *= 0.8;
 
+    // ease the focused chain forward
+    if (this.focusIndex >= 0 && this.focusT < 1) {
+      this.focusT = Math.min(1, this.focusT + dt * 2.6);
+    }
+
     this._acc += Math.min(dt, 0.05);
     let steps = 0;
     while (this._acc >= FIXED && steps < MAX_STEPS) {
@@ -570,7 +747,7 @@ export class ChainRail {
     for (const i of this.active) {
       const c = this.chains[i];
       if (c.sleepState === 'awake') {
-        if (c.grabbed >= 0) { c.calmFrames = 0; continue; }
+        if (c.grabbed >= 0 || i === this.focusIndex) { c.calmFrames = 0; continue; }
         // stay awake & reactive while the hover field is over this chain
         if (cur.active && Math.abs(c.discX - cur.x) < this.params.cursorRadius) c.calmFrames = 0;
         else if (c.energy() < this.params.sleepThreshold) c.calmFrames++;
@@ -633,7 +810,38 @@ export class ChainRail {
 
     if (this._needsComposite) this._recomposite();
     ctx.drawImage(this.layer, 0, 0, DESIGN.W, DESIGN.H); // sleeping chains (static)
-    for (const i of this.active) this.chains[i].draw(ctx, this.jewelry); // live chains
+    for (const i of this.active) {
+      if (i === this.focusIndex) continue;              // drawn lifted, on top
+      this.chains[i].draw(ctx, this.jewelry);
+    }
+    if (this.hoverTag >= 0 && this.hoverTag !== this.focusIndex) {
+      this.chains[this.hoverTag]._drawTag(ctx, true);   // highlight under cursor
+    }
+  }
+
+  /**
+   * PIECE_DETAIL: dim the case and bring the selected chain forward, centered
+   * to the left so the DOM card can sit beside it. The chain keeps simulating,
+   * so it still sways while you read.
+   */
+  drawFocused(ctx, now) {
+    const c = this.chains[this.focusIndex];
+    if (!c) return;
+    const t = easeInOutCubic(this.focusT);
+
+    ctx.fillStyle = `rgba(4,9,20,${0.72 * t})`;
+    ctx.fillRect(0, 0, DESIGN.W, DESIGN.H);
+
+    const cx = c.discX, cy = this.railY;
+    const tx = DESIGN.W * 0.32, ty = this.railY - 30;
+    const s = 1 + 0.42 * t;
+
+    ctx.save();
+    ctx.translate(cx + (tx - cx) * t, cy + (ty - cy) * t);
+    ctx.scale(s, s);
+    ctx.translate(-cx, -cy);
+    c.draw(ctx, this.jewelry);
+    ctx.restore();
   }
 
   _rail(ctx) {

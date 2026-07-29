@@ -156,6 +156,157 @@ html, body {
 }
 .case-label.is-hover .es { color: var(--gold-hi); }
 
+/* ── Piece detail card (a shop tag, in DOM) ──────────────────────────────── */
+#piece-card {
+  position: absolute;
+  top: 50%;
+  right: 132px;
+  width: 520px;
+  transform: translateY(-50%) rotate(-1.1deg);
+  padding: 44px 46px 34px;
+  pointer-events: auto;
+  background:
+    repeating-linear-gradient(0deg, rgba(150,130,90,0.05) 0 1px, transparent 1px 30px),
+    linear-gradient(150deg, #FBF6E9 0%, #F2EAD5 55%, #E9DFC4 100%);
+  color: #2A2417;
+  border: 1px solid rgba(120, 100, 60, 0.4);
+  border-radius: 4px;
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.62), 0 2px 0 rgba(255, 255, 255, 0.5) inset;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 260ms ease, transform 260ms ease, visibility 260ms;
+}
+#piece-card[data-show="true"] {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) rotate(-1.1deg) translateX(0);
+}
+#piece-card[data-show="false"] { transform: translateY(-50%) rotate(-1.1deg) translateX(26px); }
+
+/* punched hole at the top, like a real tag */
+.pc-hole {
+  position: absolute;
+  top: 16px; left: 50%;
+  width: 20px; height: 20px;
+  margin-left: -10px;
+  border-radius: 50%;
+  background: rgba(20, 16, 8, 0.72);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+.pc-close {
+  position: absolute;
+  top: 12px; right: 14px;
+  width: 30px; height: 30px;
+  font-size: 20px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid rgba(120, 100, 60, 0.35);
+  border-radius: 50%;
+  color: #6B5A34;
+  cursor: pointer;
+}
+.pc-close:hover { border-color: var(--vermilion); color: var(--vermilion); }
+
+.pc-head { margin: 6px 0 20px; text-align: center; }
+.pc-head h2 {
+  margin: 0;
+  font-family: "Snell Roundhand", "Segoe Script", "Bradley Hand", cursive;
+  font-size: 46px;
+  font-weight: 600;
+  line-height: 1.05;
+  color: #1F1A10;
+}
+.pc-head p {
+  margin: 6px 0 0;
+  font-size: 15px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(60, 50, 28, 0.66);
+}
+
+.pc-rows { border-top: 1px dashed rgba(120, 100, 60, 0.45); }
+.pc-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 11px 2px;
+  border-bottom: 1px dashed rgba(120, 100, 60, 0.28);
+}
+.pc-label { display: flex; flex-direction: column; }
+.pc-label b { font-size: 18px; font-weight: 600; }
+.pc-label i {
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(60, 50, 28, 0.6);
+}
+.pc-value { font-size: 20px; text-align: right; }
+.pc-sub { display: block; font-size: 12px; color: rgba(60, 50, 28, 0.6); }
+
+.pc-price {
+  margin: 20px 0 22px;
+  text-align: center;
+  font-family: "Snell Roundhand", "Segoe Script", "Bradley Hand", cursive;
+}
+.pc-price b { display: block; font-size: 42px; color: #8C1D14; }
+.pc-price i {
+  font-style: normal;
+  font-family: var(--chrome-font);
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(60, 50, 28, 0.6);
+}
+.pc-price.is-ask b { font-size: 27px; line-height: 1.2; }
+
+.pc-actions { display: flex; gap: 12px; align-items: stretch; }
+.pc-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  text-decoration: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.pc-btn--sms {
+  flex: 1;
+  padding: 13px 18px;
+  background: linear-gradient(180deg, var(--gold-hi), var(--gold));
+  border: 1px solid #9C7A18;
+  color: #201800;
+}
+.pc-btn--sms b { font-size: 20px; }
+.pc-btn--sms i {
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.pc-btn--sms:hover { filter: brightness(1.07); }
+.pc-btn--ig {
+  padding: 13px 16px;
+  background: transparent;
+  border: 1px solid rgba(120, 100, 60, 0.45);
+  color: #6B5A34;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+.pc-btn--ig:hover { border-color: var(--vermilion); color: var(--vermilion); }
+
+.pc-phone {
+  margin: 16px 0 0;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(60, 50, 28, 0.5);
+}
+
 /* ── Action bar (bottom-center) ──────────────────────────────────────────── */
 #action-bar {
   position: absolute;

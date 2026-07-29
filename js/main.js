@@ -1,7 +1,7 @@
 // main.js — bootstrap. Wires the stage, state machine, procedural gate,
 // renderer, DOM overlay, debug panel, and all pointer/scroll input.
 
-import { GATE_RECT, SCENES, STATES, TRANSIENTS } from './config.js';
+import { DESIGN, GATE_RECT, SCENES, STATES, TRANSIENTS } from './config.js';
 import { Stage } from './stage.js';
 import { StateMachine } from './state.js';
 import { Gate } from './gate.js';
@@ -11,6 +11,8 @@ import { ChainRail } from './chains.js';
 import { buildChainTuner } from './chaintuner.js';
 import { Storefront } from './storefront.js';
 import { Interior } from './interior.js';
+import { loadInventory, renderGauge } from './inventory.js';
+import { PieceCard } from './piececard.js';
 import { Renderer } from './render.js';
 import { Overlay } from './overlay.js';
 import { DebugPanel } from './debug.js';
@@ -29,8 +31,26 @@ const gate = new Gate({ ...GATE_RECT }, () => machine.go(STATES.STOREFRONT));
 const assets = new AssetRegistry(); // add { manifest: ['link:cuban', ...] } to use PNGs
 const jewelry = new Jewelry(assets, () => stage.dpr);
 
-// The chain case. A quick tap on a chain opens its piece detail.
-const chainRail = new ChainRail(stage, jewelry, () => machine.go(STATES.PIECE_DETAIL));
+// The chain case — 00 chains until the inventory lands, then rebuilt from it.
+const inventory = await loadInventory();
+for (const p of inventory.pieces) p.renderGauge = renderGauge(p);
+
+// A quick tap on a chain or its price tag opens that piece's detail card.
+const chainRail = new ChainRail(stage, jewelry, (i) => openPiece(i), {
+  railY: 158, x0: 190, x1: DESIGN.W - 190, seed: 1337, scale: 1.22, dropScale: 1.45,
+  pieces: inventory.pieces, tags: true,
+});
+
+// The handwritten-tag detail card (DOM chrome over the lifted chain).
+const pieceCard = new PieceCard(inventory, () => machine.go(STATES.CASE_FOCUS));
+
+function openPiece(index) {
+  const piece = inventory.pieces[index];
+  if (!piece) return;
+  chainRail.focus(index);
+  pieceCard.show(piece);
+  machine.go(STATES.PIECE_DETAIL);
+}
 
 // Live sliders for the chain physics — visible while the 'D' debug view is on.
 const chainTuner = buildChainTuner(chainRail.params);
@@ -71,6 +91,7 @@ machine.onChange((state) => {
   overlay.setHotspotHover(null);
   canvas.style.cursor = 'default';
   if (state !== STATES.CASE_FOCUS) chainRail.clearCursor();
+  if (state !== STATES.PIECE_DETAIL) { pieceCard.hide(); chainRail.unfocus(); }
   if (state !== STATES.STOREFRONT) windowChains.clearCursor();
   if (state === STATES.STOREFRONT) storefront.reset();
   // Step through the door: run the push-in for the whole ENTERING transient.
@@ -152,7 +173,10 @@ window.addEventListener('pointermove', (e) => {
   }
   if (isCaseState()) {
     chainRail.pointerMove(x, y, e.buttons > 0);
-    if (!chainRail.dragging) canvas.style.cursor = 'grab';
+    if (!chainRail.dragging) {
+      chainRail.hoverTag = chainRail.tagAt(x, y);
+      canvas.style.cursor = chainRail.hoverTag >= 0 ? 'pointer' : 'grab';
+    }
     return;
   }
   if (isStorefront()) {
@@ -227,5 +251,6 @@ renderer.start();
 
 // Handy for console poking during development.
 window.OroLatino = {
-  stage, machine, gate, chainRail, windowChains, storefront, interior, jewelry, assets, renderer,
+  stage, machine, gate, chainRail, windowChains, storefront, interior,
+  inventory, pieceCard, jewelry, assets, renderer,
 };

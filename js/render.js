@@ -50,7 +50,10 @@ export class Renderer {
     const dt = this._last ? (now - this._last) / 1000 : 0;
     this._last = now;
     if (this.gate && this._isGateState()) this.gate.update(dt);
-    if (this.chainRail && this.machine.state === STATES.CASE_FOCUS) this.chainRail.update(dt);
+    if (this.chainRail &&
+        (this.machine.state === STATES.CASE_FOCUS || this.machine.state === STATES.PIECE_DETAIL)) {
+      this.chainRail.update(dt);
+    }
     if (this.storefront && this.machine.state === STATES.STOREFRONT) this.storefront.update(dt);
     this.camera.update(dt);
     if (this.onCamera) {
@@ -113,6 +116,12 @@ export class Renderer {
         darken: 0.62 * p,
         focusRect: this.zoomRect,
       });
+    }
+
+    // The lifted chain sits over the dimmed case it came from.
+    if (state === STATES.PIECE_DETAIL && this.chainRail) {
+      this.chainRail.draw(ctx, now);
+      this.chainRail.drawFocused(ctx, now);
     }
 
     if (state === STATES.CASE_FOCUS && this.chainRail) {

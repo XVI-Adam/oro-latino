@@ -109,6 +109,27 @@ single CSS transform and letterboxed (`js/stage.js`).
 Interactive boxes carry a `to:` state in `config.js`, get a vermilion dot +
 gold hover border on the canvas, and are click/hover hit-tested in `js/main.js`.
 
+## The chain case & piece detail
+
+`CASE_FOCUS` fills the frame with the shop's stock: one hanging chain per
+entry in **`data/pieces.json`**, each fully draggable, each with a small white
+**price tag** on its own Verlet pendulum tied to one strand (so tags swing
+independently and settle with the chain). Clicking a tag *or* a chain lifts
+that piece forward and centered, dims the case, and opens `PIECE_DETAIL`.
+
+The detail card (`js/piececard.js`) is DOM chrome laid out like a handwritten
+shop tag — punched hole, ruled cream paper, script name — showing bilingual
+name, chain type, karat, gauge, length, and either the price or
+*"Pregunta por el precio / Ask for price"*. **Inquire / Preguntar** opens an
+`sms:` deep link to the store prefilled with a bilingual message naming the
+piece, with an Instagram link as fallback.
+
+**Everything is a content edit.** `data/pieces.json` supplies the store's
+contact details, all copy templates, and the pieces themselves — how many
+chains hang, their link style, visual gauge (derived from the real `gauge_mm`),
+and pendant. `js/inventory.js` loads it and falls back to a small built-in set
+if the file is missing, so the page still runs.
+
 ## Cinematics, shadows & compositing
 
 - **Transitions** (`js/camera.js`) — `STOREFRONT → INTERIOR` is a **push-in
