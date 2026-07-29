@@ -437,6 +437,52 @@ html, body {
   color: var(--gold-hi);
 }
 
+/* ── Route numerals: flip on scene change ────────────────────────────────── */
+@keyframes numeral-turn {
+  0%   { transform: translateY(-12px) rotateX(70deg); opacity: 0; }
+  55%  { transform: translateY(2px) rotateX(-8deg); opacity: 1; }
+  100% { transform: translateY(0) rotateX(0deg); opacity: 1; }
+}
+#scene-numeral, .route-num { display: inline-block; transform-origin: 50% 50%; }
+#scene-numeral.is-turning { animation: numeral-turn 460ms cubic-bezier(.2,.8,.25,1); }
+.route-num.is-turning { animation: numeral-turn 380ms cubic-bezier(.2,.8,.25,1); }
+@media (prefers-reduced-motion: reduce) {
+  #scene-numeral.is-turning, .route-num.is-turning { animation: none; }
+}
+
+/* ── Sound toggle ────────────────────────────────────────────────────────── */
+#sound-btn {
+  position: absolute;
+  right: 56px;
+  bottom: 132px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 16px;
+  font-family: var(--chrome-font);
+  background: rgba(11, 11, 12, 0.55);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 2px;
+  color: var(--cream);
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0.62;
+  transition: opacity 160ms ease, border-color 160ms ease;
+}
+#sound-btn:hover { opacity: 1; border-color: var(--gold); }
+#sound-btn[aria-pressed="true"] { opacity: 1; border-color: var(--gold); }
+#sound-btn .sb-icon { color: var(--gold-lo); font-size: 15px; }
+#sound-btn[aria-pressed="true"] .sb-icon { color: var(--gold-hi); }
+#sound-btn .sb-label { display: flex; flex-direction: column; line-height: 1.15; }
+#sound-btn .sb-label [lang="es"] { font-size: 13px; }
+#sound-btn .sb-label [lang="en"] { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.6; }
+body.is-portrait #sound-btn {
+  right: auto;
+  left: calc(var(--fx) + var(--fw) - 22px);
+  bottom: calc(var(--fy) + 100px);
+  transform: translateX(-100%);
+}
+
 /* ── Attract mode ────────────────────────────────────────────────────────── */
 #ghost-cursor {
   position: fixed;

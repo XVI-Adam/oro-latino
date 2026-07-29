@@ -15,6 +15,7 @@ import { loadInventory, renderGauge } from './inventory.js';
 import { PieceCard } from './piececard.js';
 import { Accessibility } from './a11y.js';
 import { AttractMode } from './attract.js';
+import { Sound } from './audio.js';
 import { detectQuality, isCoarse, prefersReducedMotion, isPortrait, watchEnvironment } from './quality.js';
 import { Renderer } from './render.js';
 import { Overlay } from './overlay.js';
@@ -78,8 +79,14 @@ const windowChains = new ChainRail(stage, jewelry, () => {}, {
 const storefront = new Storefront({ ...GATE_RECT }, windowChains, jewelry,
   () => machine.go(STATES.ENTERING));
 
+// Procedural sound, off until asked for (no AudioContext until then).
+const sound = new Sound();
+gate.onRattle = (v) => sound.rattle(v);
+chainRail.onRelease = (v) => sound.clink(v);
+windowChains.onRelease = (v) => sound.clink(v * 0.7);
+
 // The shop interior: light box, wall cases, chain rack, counter, sticker wall.
-const interior = new Interior(jewelry);
+const interior = new Interior(jewelry, QUALITY);
 
 // Which interactive region is under the pointer (canvas hover highlight).
 let hoverId = null;
@@ -129,6 +136,7 @@ machine.onChange((state) => {
   if (state !== STATES.PIECE_DETAIL) { pieceCard.hide(); chainRail.unfocus(); }
   if (state !== STATES.STOREFRONT) windowChains.clearCursor();
   if (state === STATES.STOREFRONT) storefront.reset();
+  if (state === STATES.INTERIOR) interior.flicker();   // the tube strikes as you walk in
   // Step through the door: run the push-in for the whole ENTERING transient.
   if (state === STATES.ENTERING) renderer.beginDolly(TRANSIENTS[STATES.ENTERING].duration);
   if (state === STATES.GATE_CLOSED) {
@@ -230,6 +238,7 @@ window.addEventListener('pointermove', (e) => {
     return;
   }
   if (isInterior()) {
+    interior.cursor.x = x; interior.cursor.y = y;   // the dome follows it
     if (renderer.camera.kind === 'zoom') return; // don't fight the transition
     const spot = interior.hitTest(x, y);
     hoverId = spot ? spot.id : null;
@@ -302,6 +311,12 @@ const attract = new AttractMode({
 });
 document.getElementById('tour-btn').addEventListener('click', () => attract.start());
 
+const soundBtn = document.getElementById('sound-btn');
+soundBtn.addEventListener('click', () => {
+  const on = sound.toggle();
+  soundBtn.setAttribute('aria-pressed', String(on));
+});
+
 // ── accessibility: keyboard path + parallel screen-reader lists ────────────
 const a11y = new Accessibility({
   machine, chainRail, interior, inventory,
@@ -345,5 +360,5 @@ watchEnvironment(() => {
 
 window.OroLatino = {
   stage, machine, gate, chainRail, windowChains, storefront, interior,
-  inventory, pieceCard, jewelry, assets, renderer, attract, a11y,
+  inventory, pieceCard, jewelry, assets, renderer, attract, a11y, sound,
 };

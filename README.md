@@ -130,6 +130,40 @@ chains hang, their link style, visual gauge (derived from the real `gauge_mm`),
 and pendant. `js/inventory.js` loads it and falls back to a small built-in set
 if the file is missing, so the page still runs.
 
+## Polish & performance
+
+Details that only show up when you sit with it: price tags **flutter** from the
+air a chain moves through — and from a neighbour swinging past; the light box
+**flickers** like a tube striking when you first walk in; **dust motes** drift
+up the spotlight beams; a security camera **dome tracks the cursor**, slowly;
+**glints** sweep across gold at random intervals (a second atlas pass with
+`lighter` compositing, so the sprite masks the highlight onto the metal
+exactly); route **numerals flip** on scene change; and optional procedural
+**sound** — gate rattle, chain clink — is muted by default and creates no
+`AudioContext` until you turn it on.
+
+Loading is instant because everything is drawn, not fetched. Photo cutouts are
+lazy-swapped in as they arrive (see the asset pipeline above).
+
+### Per-frame canvas op audit
+
+Measured by instrumenting the 2D context and counting calls in one steady frame:
+
+| scene (steady state) | total ops | `drawImage` | paths |
+|---|---|---|---|
+| **CASE_FOCUS**, all chains asleep | **3** | **1** | 0 |
+| STOREFRONT | 20 | 2 | 1 |
+| INTERIOR | 84 | 48 | 6 |
+| GATE_CLOSED | 97 | 33 | 4 |
+
+A resting chain case — 14 chains, every link, tag, contact shadow and pendant —
+is **one `drawImage`** plus the backdrop fill. The audit drove two real fixes:
+the gate now stamps a **pre-rendered slat sprite** (802 → 97 ops, 324 → 4
+paths) and the light box's static body is **baked into the wall layer** with
+only its brightness envelope live. The interior's remaining cost is its ~46
+dust motes, which are deliberate particles stamped from a sprite and scaled by
+the device quality budget.
+
 ## Attract mode
 
 After **20s idle** — or via the **Recorrido / Tour** button — a ghost cursor

@@ -93,6 +93,7 @@ export class Gate {
     const sp = Math.abs(this.vel);
     this.rattle = Math.max(this.rattle, Math.min(1, sp * 0.4));
     this.shake = Math.max(this.shake, Math.min(1, sp * 0.22));
+    if (sp > 0.3) this.onRattle?.(Math.min(1, sp * 0.4));
   }
 
   /** Scroll up (deltaY < 0) nudges the gate open. */
@@ -123,6 +124,7 @@ export class Gate {
         this.vel = -this.vel * 0.42;
         this.rattle = Math.max(this.rattle, impact);
         this.shake = Math.max(this.shake, impact * 0.75);
+        this.onRattle?.(impact);
       } else {
         this.vel = 0;
       }
@@ -136,6 +138,7 @@ export class Gate {
         this.opened = true;
         this.shake = Math.max(this.shake, 0.6);
         this.rattle = Math.max(this.rattle, 0.7);
+        this.onRattle?.(0.8);
         this.onOpen();
       }
     }
@@ -198,43 +201,57 @@ export class Gate {
     this._cylinder(ctx, x, y, w, cylH);
   }
 
-  _slatGradient(ctx) {
-    if (this._slatGrad) return this._slatGrad;
-    const g = ctx.createLinearGradient(0, 0, 0, this.slatH);
+  /**
+   * One slat, rendered once into an offscreen sprite. The curtain is redrawn
+   * every frame while the gate moves, so stamping a sprite (1 drawImage per
+   * slat) instead of re-rasterising a gradient plus ~10 rib strokes per slat
+   * takes the closed-gate frame from ~800 canvas ops to well under a hundred.
+   */
+  _slatSprite(w) {
+    if (this._sprite && this._spriteW === w) return this._sprite;
+    const dpr = 2;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(w * dpr);
+    c.height = Math.ceil(this.slatH * dpr);
+    const g2 = c.getContext('2d');
+    g2.scale(dpr, dpr);
+
+    const g = g2.createLinearGradient(0, 0, 0, this.slatH);
     g.addColorStop(0.0, '#34383f');
     g.addColorStop(0.18, '#6c717a'); // ridge highlight
     g.addColorStop(0.5, '#4a4e56');
     g.addColorStop(0.85, '#2a2d32');
     g.addColorStop(1.0, '#17191c'); // groove shadow
-    this._slatGrad = g;
-    return g;
+    g2.fillStyle = g;
+    g2.fillRect(0, 0, w, this.slatH);
+    g2.fillStyle = 'rgba(255,255,255,0.05)';
+    g2.fillRect(0, 0, w, 1);
+
+    // corrugated cross-texture
+    g2.strokeStyle = 'rgba(0,0,0,0.18)';
+    g2.lineWidth = 1;
+    for (let rx = 130; rx < w; rx += 130) {
+      g2.beginPath();
+      g2.moveTo(rx, 0);
+      g2.lineTo(rx, this.slatH);
+      g2.stroke();
+    }
+
+    this._sprite = c;
+    this._spriteW = w;
+    return c;
   }
 
   _slat(ctx, x, y, w, hh, pos, i) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.fillStyle = this._slatGradient(ctx); // gradient reused via translate
-    ctx.fillRect(0, 0, w, hh);
+    const sprite = this._slatSprite(w);
+    // hh is clipped at the rail, so take the matching slice off the sprite top
+    const sh = (hh / this.slatH) * sprite.height;
+    ctx.drawImage(sprite, 0, 0, sprite.width, sh, x, y, w, hh);
 
-    // light bleeding through the groove between slats — grows as it rises
+    // light bleeding through the groove — the one pos-dependent bit
     const bleed = Math.min(1, 0.12 + pos * 0.7);
     ctx.fillStyle = `rgba(255, 224, 168, ${0.14 * bleed})`;
-    ctx.fillRect(0, hh - 1.5, w, 1.5);
-    ctx.fillStyle = 'rgba(255,255,255,0.05)';
-    ctx.fillRect(0, 0, w, 1);
-    ctx.restore();
-
-    // faint vertical ribs (every ~130px) for corrugated cross-texture
-    if (i % 1 === 0) {
-      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-      ctx.lineWidth = 1;
-      for (let rx = x + 130; rx < x + w; rx += 130) {
-        ctx.beginPath();
-        ctx.moveTo(rx, y);
-        ctx.lineTo(rx, y + hh);
-        ctx.stroke();
-      }
-    }
+    ctx.fillRect(x, y + hh - 1.5, w, 1.5);
   }
 
   _rail(ctx, x, w, railY, pos) {

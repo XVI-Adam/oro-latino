@@ -196,6 +196,41 @@ export class Jewelry {
    * Stamp a chain of `style` along the particle polyline `P` at `gauge` scale.
    * @param {Array<{x:number,y:number}>} P
    */
+  /**
+   * Walk the rope polyline and hand every link position to `cb`, along with
+   * its normalized distance along the chain. Shared by the normal stamping
+   * pass and the glint pass so they can never disagree about link placement.
+   */
+  _walk(P, layout, gauge, cb) {
+    // total length first, so each link knows where it sits along the chain
+    let total = 0;
+    for (let s = 0; s < P.length - 1; s++) {
+      total += Math.hypot(P[s + 1].x - P[s].x, P[s + 1].y - P[s].y);
+    }
+    total = total || 1;
+
+    let idx = 0;
+    let travelled = 0;
+    let need = layout.seq(0).pitch * gauge * 0.5;
+    for (let s = 0; s < P.length - 1; s++) {
+      const ax = P[s].x, ay = P[s].y;
+      const dx = P[s + 1].x - ax, dy = P[s + 1].y - ay;
+      const len = Math.hypot(dx, dy) || 1e-6;
+      const ang = Math.atan2(dy, dx);
+      let pos = 0;
+      while (pos + need <= len) {
+        pos += need;
+        const f = pos / len;
+        const link = layout.seq(idx);
+        cb(link.v, ax + dx * f, ay + dy * f, ang + link.ang, (travelled + pos) / total);
+        idx++;
+        need = layout.seq(idx).pitch * gauge;
+      }
+      need -= (len - pos);
+      travelled += len;
+    }
+  }
+
   strokeChain(ctx, P, style, gauge = 1) {
     this._checkDpr();
     const layout = STYLES[style] || STYLES.rope;
@@ -208,24 +243,28 @@ export class Jewelry {
     ctx.restore();
     this._core(ctx, P, 2.2 * gauge, 'rgba(90,66,10,0.6)'); // thin gold cord
 
-    let idx = 0;
-    let need = layout.seq(0).pitch * gauge * 0.5;
-    for (let s = 0; s < P.length - 1; s++) {
-      const ax = P[s].x, ay = P[s].y;
-      let dx = P[s + 1].x - ax, dy = P[s + 1].y - ay;
-      const len = Math.hypot(dx, dy) || 1e-6;
-      const ang = Math.atan2(dy, dx);
-      let pos = 0;
-      while (pos + need <= len) {
-        pos += need;
-        const t = pos / len;
-        const link = layout.seq(idx);
-        this._link(link.v).stamp(ctx, ax + dx * t, ay + dy * t, ang + link.ang, gauge);
-        idx++;
-        need = layout.seq(idx).pitch * gauge;
-      }
-      need -= (len - pos);
-    }
+    this._walk(P, layout, gauge, (v, x, y, a) => this._link(v).stamp(ctx, x, y, a, gauge));
+  }
+
+  /**
+   * Specular glint sweeping along a chain. Re-stamps only the links inside a
+   * soft band with `lighter` compositing — the atlas sprite is its own mask, so
+   * the highlight lands exactly on the gold and nowhere else.
+   * @param {number} pos  0→1 band centre along the chain
+   */
+  glintChain(ctx, P, style, gauge = 1, pos = 0, width = 0.17, strength = 1) {
+    this._checkDpr();
+    const layout = STYLES[style] || STYLES.rope;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    this._walk(P, layout, gauge, (v, x, y, a, t) => {
+      const d = Math.abs(t - pos);
+      if (d > width) return;
+      const fall = 1 - d / width;
+      ctx.globalAlpha = fall * fall * 0.55 * strength;
+      this._link(v).stamp(ctx, x, y, a, gauge);
+    });
+    ctx.restore();
   }
 
   _core(ctx, P, width, color) {

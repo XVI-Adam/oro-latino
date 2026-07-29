@@ -140,18 +140,30 @@ class Chain {
   }
 
   /** One Verlet step for the tag pendulum (runs after the chain has settled). */
-  _stepTag(dt, damping) {
+  _stepTag(dt, damping, wake = 0) {
     const T = this.tag;
     if (!T) return;
-    const g = GRAVITY * 0.6 * dt * dt;
-    for (const p of T.parts) {
-      const vx = (p.x - p.px) * damping;
-      const vy = (p.y - p.py) * damping;
-      p.px = p.x; p.py = p.y;
-      p.x += vx;
-      p.y += vy + g;
-    }
     const A = this.particles[T.anchorIdx];
+    // A tag is light paper: it flutters from the air its own chain moves
+    // through, and from a neighbour swinging past (`wake`).
+    const anchorSpeed = Math.hypot(A.x - A.px, A.y - A.py);
+    T.flutter = Math.max(T.flutter || 0, anchorSpeed * 0.55 + wake);
+    T.flutter *= 0.90;
+    T.phase = (T.phase || 0) + dt * 26;
+    const f = Math.min(T.flutter, 3.2);
+    // damping is a touch looser than the chain's so it keeps trembling briefly
+    const tagDamp = damping * 0.998;
+    const g = GRAVITY * 0.6 * dt * dt;
+    for (let i = 0; i < T.parts.length; i++) {
+      const p = T.parts[i];
+      const vx = (p.x - p.px) * tagDamp;
+      const vy = (p.y - p.py) * tagDamp;
+      p.px = p.x; p.py = p.y;
+      // the free end flutters hardest
+      const amp = f * (i === T.parts.length - 1 ? 1 : 0.35);
+      p.x += vx + Math.sin(T.phase + i * 2.1) * amp * 0.42;
+      p.y += vy + g + Math.cos(T.phase * 1.3 + i) * amp * 0.16;
+    }
     for (let k = 0; k < 4; k++) {
       this._tie(A, T.parts[0], T.len, false);   // anchor is driven by the chain
       this._tie(T.parts[0], T.parts[1], T.len, true);
@@ -308,7 +320,8 @@ class Chain {
       cursor, cursorForce: params.cursorForce, cursorRadius: params.cursorRadius,
     });
     this.satisfy(iters);
-    this._stepTag(dt, params.damping);
+    this._stepTag(dt, params.damping, this.airWake || 0);
+    this.airWake = 0;
   }
 
   // ── system 3: sleep blend ───────────────────────────────────────────────
@@ -618,6 +631,12 @@ export class ChainRail {
     this.focusIndex = -1;
     this.focusT = 0;
     this.hoverTag = -1;
+    // Specular glints: a couple sweep across random chains now and then. They
+    // run for sleeping chains too (drawn over the composite), so the resting
+    // wall still catches light.
+    this.glints = [];
+    this._nextGlint = 1.2;
+    this.onRelease = null;   // (speed) => void — for the clink
   }
 
   /** Highlight a chain from the keyboard (mirrors the SR list's focus). */
@@ -731,6 +750,8 @@ export class ChainRail {
     if (!this.dragging) return;
     const c = this.chains[this.dragChain];
     const tap = this._moved < 8;
+    // hand the release speed to whoever wants to make a noise about it
+    if (!tap && this.onRelease) this.onRelease(Math.min(1, c.energy() * 0.4));
     c.release();
     this.dragging = false;
     const idx = this.dragChain;
@@ -748,6 +769,7 @@ export class ChainRail {
     // Reduced motion: no swinging at all. Chains stay in their baked rest pose
     // and scenes change by crossfade, so nothing moves that wasn't asked for.
     if (this.reducedMotion) {
+      this.glints.length = 0;          // no roving highlights either
       for (const i of [...this.active]) {
         const c = this.chains[i];
         if (c.grabbed < 0 && i !== this.focusIndex) {
@@ -766,6 +788,23 @@ export class ChainRail {
     if (this.focusIndex >= 0 && this.focusT < 1) {
       this.focusT = Math.min(1, this.focusT + dt * 2.6);
     }
+
+    // A chain swinging hard stirs the air around it: nearby tags flutter.
+    for (const i of this.active) {
+      const c = this.chains[i];
+      const e = c.energy();
+      if (e < 0.6) continue;
+      const gust = Math.min(1.6, e * 0.25);
+      for (let k = i - 2; k <= i + 2; k++) {
+        if (k === i || k < 0 || k >= this.chains.length) continue;
+        const n = this.chains[k];
+        const falloff = 1 - Math.abs(k - i) / 3;
+        n.airWake = Math.max(n.airWake || 0, gust * falloff);
+        if (n.sleepState === 'asleep' && gust * falloff > 0.5) this.activate(k);
+      }
+    }
+
+    this._stepGlints(dt);
 
     this._acc += Math.min(dt, 0.05);
     let steps = 0;
@@ -797,6 +836,34 @@ export class ChainRail {
       }
     }
     for (const i of done) { this.active.delete(i); this._needsComposite = true; }
+  }
+
+  /** Schedule and advance the roving specular glints. */
+  _stepGlints(dt) {
+    for (let i = this.glints.length - 1; i >= 0; i--) {
+      const g = this.glints[i];
+      g.t += dt / g.dur;
+      if (g.t >= 1) this.glints.splice(i, 1);
+    }
+    this._nextGlint -= dt;
+    if (this._nextGlint <= 0 && this.glints.length < 2) {
+      const i = (Math.random() * this.chains.length) | 0;
+      if (!this.glints.some((g) => g.i === i)) {
+        this.glints.push({ i, t: 0, dur: 0.55 + Math.random() * 0.45, dir: Math.random() < 0.5 ? 1 : -1 });
+      }
+      this._nextGlint = 0.9 + Math.random() * 2.6;   // random intervals
+    }
+  }
+
+  _drawGlints(ctx) {
+    for (const g of this.glints) {
+      const c = this.chains[g.i];
+      if (!c) continue;
+      const pos = g.dir > 0 ? g.t : 1 - g.t;
+      // fade in and out so the band never pops
+      const strength = Math.sin(Math.PI * g.t);
+      this.jewelry.glintChain(ctx, c.particles, c.style, c.gauge, pos, 0.17, strength);
+    }
   }
 
   /** Chains currently in motion (awake or settling). */
@@ -853,6 +920,7 @@ export class ChainRail {
       if (i === this.focusIndex) continue;              // drawn lifted, on top
       this.chains[i].draw(ctx, this.jewelry);
     }
+    this._drawGlints(ctx);
     if (this.hoverTag >= 0 && this.hoverTag !== this.focusIndex) {
       this.chains[this.hoverTag]._drawTag(ctx, true);   // highlight under cursor
     }

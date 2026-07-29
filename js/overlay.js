@@ -97,8 +97,22 @@ export class Overlay {
     const scene = SCENES[state];
     if (!scene) return;
 
-    // Scene plate.
+    // Scene plate — restart the numeral animation on every change.
+    const changed = this.numeral.textContent !== scene.plate.num;
     this.numeral.textContent = scene.plate.num;
+    this.numeral.classList.remove('is-turning');
+    void this.numeral.offsetWidth;            // force reflow so it replays
+    this.numeral.classList.add('is-turning');
+    if (changed) {
+      for (const li of this.routeList.children) {
+        const n = li.querySelector('.route-num');
+        if (n.textContent === scene.plate.num) {
+          n.classList.remove('is-turning');
+          void n.offsetWidth;
+          n.classList.add('is-turning');
+        }
+      }
+    }
     this.labelEs.textContent = scene.plate.es;
     this.labelEn.textContent = scene.plate.en;
 

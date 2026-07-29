@@ -58,6 +58,10 @@ export class Renderer {
       this.chainRail.update(dt);
     }
     if (this.storefront && this.machine.state === STATES.STOREFRONT) this.storefront.update(dt);
+    if (this.interior &&
+        (this.machine.state === STATES.INTERIOR || this.machine.state === STATES.ENTERING)) {
+      this.interior.update(dt);
+    }
     this.camera.update(dt);
     if (this.onCamera) {
       // ramp the chrome out fast at the start of a move, back in when it ends

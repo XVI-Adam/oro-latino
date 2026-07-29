@@ -39,13 +39,15 @@ const CASE_B = { x: 1110, y: 250, w: 350, h: 330 };
 const STICKERS = { x: 92, y: 252, w: 232, h: 358 };
 const WINDOW = { x: 1512, y: 196, w: 292, h: 344 };
 const LIGHTBOX = { x: 694, y: 92, w: 470, h: 140 };
+const DOME = { x: 1330, y: 104, r: 34 };   // clear of the scene-plate chrome
 const CEILING_H = 62;
 const WALL_BOTTOM = 648;
 
 export class Interior {
   /** @param {Jewelry} jewelry procedural jewelry renderer (case goods) */
-  constructor(jewelry) {
+  constructor(jewelry, quality = 1) {
     this.jewelry = jewelry;
+    this.quality = quality;
 
     // Hover-able hit regions; `to` marks the one that navigates.
     this.hotspots = [
@@ -60,9 +62,53 @@ export class Interior {
     this.near = new Layer();  // the counter in the foreground
 
     this.keyFocus = null;   // hotspot id highlighted from the keyboard
+    this.flickerT = -1;     // >=0 while the light box is warming up
+    this.cursor = { x: DESIGN.W * 0.5, y: DESIGN.H * 0.5 };
+    this.dome = { a: 0, target: 0 };   // security camera easter egg
+    this._buildMotes(quality);
 
     this._buildStickers();
     this._buildRack();
+  }
+
+  /** Fluorescent stutter when you first walk in. */
+  flicker() { this.flickerT = 0; }
+
+  /** Dust suspended in the spotlight beams. */
+  _buildMotes(quality = 1) {
+    const rng = mulberry32(5150);
+    const n = Math.round(46 * quality);
+    this.motes = [];
+    for (let i = 0; i < n; i++) {
+      this.motes.push({
+        beam: i % 3,
+        u: rng(),                    // across the cone
+        v: rng(),                    // down the cone
+        r: 0.7 + rng() * 1.9,
+        sp: 0.006 + rng() * 0.016,   // drift speed
+        sway: rng() * Math.PI * 2,
+        swayAmp: 0.008 + rng() * 0.02,
+      });
+    }
+  }
+
+  /** Advance the live details: flicker envelope, motes, dome tracking. */
+  update(dt) {
+    if (this.flickerT >= 0) {
+      this.flickerT += dt;
+      if (this.flickerT > 0.9) this.flickerT = -1;
+    }
+    for (const m of this.motes) {
+      m.v -= m.sp * dt;                       // drift upward on the warm air
+      m.sway += dt * 0.7;
+      if (m.v < 0) { m.v = 1; m.u = Math.random(); }
+    }
+    // the dome lens eases toward the cursor — slowly, like it's thinking
+    this.dome.target = Math.atan2(this.cursor.y - DOME.y, this.cursor.x - DOME.x);
+    let d = this.dome.target - this.dome.a;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    this.dome.a += d * Math.min(1, dt * 0.9);
   }
 
   /** Re-bake the static layers if the dpr changed. */
@@ -75,6 +121,7 @@ export class Interior {
       this._wallCase(c, CASE_A, 'rings');
       this._wallCase(c, CASE_B, 'pendants');
       this._chainRack(c);
+      this._lightBox(c, 0, true);   // static body, baked at full brightness
       this._spotlights(c);
       this.far.done();
     }
@@ -151,12 +198,14 @@ export class Interior {
     const blurring = blur > 0.05;
     if (blurring) ctx.filter = `blur(${blur.toFixed(2)}px)`;
     place(0, () => this.far.blit(ctx));                 // far wall
-    place(0.35, () => this._lightBox(ctx, now));        // hangs off the ceiling
+    place(0.35, () => this._lightBoxPulse(ctx, now));   // just its brightness
     place(1, () => this.near.blit(ctx));                // counter, nearest
     if (blurring) ctx.filter = 'none';
 
     // live details that must not be baked
     if (!blurring) {
+      place(0, () => this._motes(ctx));
+      place(0, () => this._dome(ctx));
       place(0, () => this._windowSweep(ctx, now));
       const lit = hoverId || this.keyFocus;
       if (lit) place(0, () => this._hover(ctx, lit, now));
@@ -406,9 +455,9 @@ export class Interior {
   }
 
   // ── backlit acrylic light box, hanging on chains ──────────────────────
-  _lightBox(ctx, now) {
+  _lightBox(ctx, now, staticOnly = false) {
     const B = LIGHTBOX;
-    const pulse = 0.92 + 0.08 * Math.sin(now * 0.0011);
+    const pulse = 1;                    // the bake is the fully-lit reference
 
     // hanging chains from the ceiling
     for (const hx of [B.x + 56, B.x + B.w - 56]) {
@@ -418,17 +467,6 @@ export class Interior {
       }
       this.jewelry.strokeChain(ctx, pts, 'box', 0.5);
     }
-
-    // halo
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    const halo = ctx.createRadialGradient(
-      B.x + B.w / 2, B.y + B.h / 2, 40, B.x + B.w / 2, B.y + B.h / 2, B.w * 0.8);
-    halo.addColorStop(0, `rgba(255,240,210,${0.16 * pulse})`);
-    halo.addColorStop(1, 'rgba(255,240,210,0)');
-    ctx.fillStyle = halo;
-    ctx.fillRect(B.x - 300, B.y - 180, B.w + 600, B.h + 380);
-    ctx.restore();
 
     // aluminum case
     ctx.fillStyle = '#0d0d0f';
@@ -468,6 +506,37 @@ export class Interior {
     ctx.lineTo(B.x, B.y + B.h * 0.85);
     ctx.closePath();
     ctx.fill();
+  }
+
+  /**
+   * The only live part of the light box: its brightness envelope and halo.
+   * The body, lettering and hanging chains are baked into the far layer, so a
+   * steady interior frame doesn't re-stamp them every frame.
+   */
+  _lightBoxPulse(ctx, now) {
+    const B = LIGHTBOX;
+    let pulse = 0.92 + 0.08 * Math.sin(now * 0.0011);
+    if (this.flickerT >= 0) {
+      // two quick stutters, then it settles — a tube striking
+      const t = this.flickerT;
+      const stutter = t < 0.10 ? 0.15 : t < 0.17 ? 1.05 : t < 0.24 ? 0.25
+                    : t < 0.31 ? 1.0 : t < 0.36 ? 0.45 : Math.min(1, 0.6 + (t - 0.36) * 1.6);
+      pulse *= stutter;
+    }
+    ctx.save();
+    if (pulse < 1) {
+      // darken the baked face toward the stutter level
+      ctx.fillStyle = `rgba(6,6,8,${(1 - pulse) * 0.9})`;
+      ctx.fillRect(B.x, B.y, B.w, B.h);
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    const halo = ctx.createRadialGradient(
+      B.x + B.w / 2, B.y + B.h / 2, 40, B.x + B.w / 2, B.y + B.h / 2, B.w * 0.8);
+    halo.addColorStop(0, `rgba(255,240,210,${0.16 * pulse})`);
+    halo.addColorStop(1, 'rgba(255,240,210,0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(B.x - 300, B.y - 180, B.w + 600, B.h + 380);
+    ctx.restore();
   }
 
   // red diamond with sparkle lines
@@ -569,6 +638,85 @@ export class Interior {
     ctx.strokeStyle = 'rgba(212,175,55,0.2)';
     ctx.lineWidth = 2;
     ctx.strokeRect(V.x, V.y, V.w, V.h);
+  }
+
+  /** A soft dot, rendered once — motes stamp it instead of filling arcs. */
+  _moteSprite() {
+    if (this._mote) return this._mote;
+    const R = 8;
+    const c = document.createElement('canvas');
+    c.width = c.height = R * 2;
+    const g2 = c.getContext('2d');
+    const g = g2.createRadialGradient(R, R, 0, R, R, R);
+    g.addColorStop(0, 'rgba(255,230,186,1)');
+    g.addColorStop(0.45, 'rgba(255,226,178,0.45)');
+    g.addColorStop(1, 'rgba(255,226,178,0)');
+    g2.fillStyle = g;
+    g2.fillRect(0, 0, R * 2, R * 2);
+    this._mote = c;
+    return c;
+  }
+
+  /** Dust motes catching the light inside the spotlight cones. */
+  _motes(ctx) {
+    const fx = this._fixtures();
+    const top = CEILING_H, bottom = WALL_BOTTOM - 20;
+    const sprite = this._moteSprite();
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const m of this.motes) {
+      const cx = fx[m.beam];
+      const y = top + (bottom - top) * m.v;
+      const halfW = 26 + (250 - 26) * m.v;                 // cone widens downward
+      const x = cx + (m.u - 0.5) * 2 * halfW + Math.sin(m.sway) * halfW * m.swayAmp * 12;
+      // brightest mid-beam, invisible at the very top and bottom
+      const a = Math.sin(Math.PI * m.v) * 0.5;
+      if (a <= 0.02) continue;
+      const s = m.r * 2.6;
+      ctx.globalAlpha = a * 0.7;
+      ctx.drawImage(sprite, x - s, y - s, s * 2, s * 2);
+    }
+    ctx.restore();
+  }
+
+  /** Security camera dome — its lens tracks the cursor. Nobody asked for it. */
+  _dome(ctx) {
+    const { x: cx, y: cy, r } = DOME;
+    ctx.save();
+    // mount
+    ctx.fillStyle = '#0b0c0e';
+    ctx.fillRect(cx - 9, cy - r - 22, 18, 24);
+    // smoked dome
+    const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, 3, cx, cy, r);
+    g.addColorStop(0, 'rgba(120,130,145,0.55)');
+    g.addColorStop(0.6, 'rgba(30,34,40,0.85)');
+    g.addColorStop(1, 'rgba(10,11,13,0.95)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+    // the lens, aimed
+    const lx = cx + Math.cos(this.dome.a) * r * 0.42;
+    const ly = cy + Math.sin(this.dome.a) * r * 0.42;
+    ctx.beginPath();
+    ctx.arc(lx, ly, r * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = '#05060a';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(lx - r * 0.09, ly - r * 0.09, r * 0.1, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(180,210,255,0.5)';
+    ctx.fill();
+    // record tally
+    ctx.beginPath();
+    ctx.arc(cx + r * 0.62, cy + r * 0.62, 2.6, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(226,58,46,0.85)';
+    ctx.fill();
+    // dome highlight
+    ctx.beginPath();
+    ctx.ellipse(cx - r * 0.3, cy - r * 0.45, r * 0.34, r * 0.17, -0.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.13)';
+    ctx.fill();
+    ctx.restore();
   }
 
   /** Slow reflection drifting across the window glass (kept out of the bake). */
