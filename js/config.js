@@ -92,12 +92,11 @@ export const SCENES = {
     actions: [{ label_es: 'Entrar', label_en: 'Enter', to: STATES.ENTERING, primary: true }],
   },
 
+  // The push-in dolly carries this state; nothing else to draw.
   [STATES.ENTERING]: {
     backdrop: 'interior',
     plate: { num: '01', es: 'Adentro', en: 'Inside' },
-    boxes: [
-      { id: 'doorway', x: 624, y: 120, w: 600, h: 840, es: 'Entrada', en: 'Doorway' },
-    ],
+    boxes: [],
     actions: [],
   },
 

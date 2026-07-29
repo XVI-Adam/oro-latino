@@ -272,9 +272,30 @@ export class Jewelry {
     ctx.restore();
   }
 
+  /**
+   * Tight ambient occlusion where a piece meets velvet — a small, dense,
+   * fast-falloff pool right at the contact point (not a soft drop shadow).
+   */
+  ao(ctx, x, y, rx, ry, strength = 0.55) {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
+    g.addColorStop(0, `rgba(0,0,0,${strength})`);
+    g.addColorStop(0.45, `rgba(0,0,0,${strength * 0.42})`);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(1, ry / Math.max(rx, ry));
+    ctx.translate(-x, -y);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(rx, ry), 0, PI2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // ── ring & bangle primitives (for later cases) ──────────────────────────
-  ring(ctx, x, y, r, { gauge = 1, gem = true, gemColor = '#E23A2E' } = {}) {
+  ring(ctx, x, y, r, { gauge = 1, gem = true, gemColor = '#E23A2E', ao = false } = {}) {
     this._checkDpr();
+    if (ao) this.ao(ctx, x, y + r * 0.92, r * 1.15, r * 0.42, 0.6);
     if (this.reg.has('ring:solitaire')) {
       const img = this.reg.cutout('ring:solitaire');
       ctx.drawImage(img, x - r, y - r, r * 2, r * 2);
@@ -299,8 +320,9 @@ export class Jewelry {
     ctx.restore();
   }
 
-  bangle(ctx, x, y, rx, ry, { gauge = 1 } = {}) {
+  bangle(ctx, x, y, rx, ry, { gauge = 1, ao = false } = {}) {
     this._checkDpr();
+    if (ao) this.ao(ctx, x, y + ry * 0.95, rx * 0.95, ry * 0.5, 0.55);
     if (this.reg.has('bangle:plain')) {
       const img = this.reg.cutout('bangle:plain');
       ctx.drawImage(img, x - rx, y - ry, rx * 2, ry * 2);

@@ -13,6 +13,7 @@
 // Everything is procedural; the case interiors reuse the jewelry renderer.
 
 import { DESIGN, PALETTE, STATES } from './config.js';
+import { Layer } from './layer.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -53,8 +54,33 @@ export class Interior {
       { id: 'caseB', ...CASE_B, es: 'Dijes',   en: 'Pendants' },
     ];
 
+    // Pre-composited static content, split by depth so the push-in can
+    // parallax them and the case zoom can blur them with two drawImages.
+    this.far = new Layer();   // room shell, sticker wall, window, cases, rack
+    this.near = new Layer();  // the counter in the foreground
+
     this._buildStickers();
     this._buildRack();
+  }
+
+  /** Re-bake the static layers if the dpr changed. */
+  _bake(dpr) {
+    if (this.far.ensure(dpr)) {
+      const c = this.far.begin();
+      this._room(c);
+      this._window(c);
+      this._stickerWall(c);
+      this._wallCase(c, CASE_A, 'rings');
+      this._wallCase(c, CASE_B, 'pendants');
+      this._chainRack(c);
+      this._spotlights(c);
+      this.far.done();
+    }
+    if (this.near.ensure(dpr)) {
+      const c = this.near.begin();
+      this._counter(c);
+      this.near.done();
+    }
   }
 
   hitTest(x, y) {
@@ -98,17 +124,60 @@ export class Interior {
   }
 
   // ── main draw ─────────────────────────────────────────────────────────
-  draw(ctx, now, hoverId = null) {
-    this._room(ctx);
-    this._window(ctx, now);
-    this._stickerWall(ctx);
-    this._wallCase(ctx, CASE_A, 'rings');
-    this._wallCase(ctx, CASE_B, 'pendants');
-    this._chainRack(ctx);
-    this._spotlights(ctx);
-    this._hover(ctx, hoverId, now);
-    this._lightBox(ctx, now);
-    this._counter(ctx, now);
+  /**
+   * Steady state is two blits plus the animated overlays. `cam` optionally
+   * carries { scale, parallax, focus, blur, darken } for the transitions.
+   */
+  draw(ctx, now, hoverId = null, dpr = 1, cam = null) {
+    this._bake(dpr);
+
+    const scale = cam?.scale ?? 1;
+    const parallax = cam?.parallax ?? 0;
+    const focus = cam?.focus ?? { x: DESIGN.W / 2, y: DESIGN.H / 2 };
+    const blur = cam?.blur ?? 0;
+
+    const place = (depth, fn) => {
+      ctx.save();
+      const s = scale * (1 + parallax * depth);
+      ctx.translate(focus.x, focus.y);
+      ctx.scale(s, s);
+      ctx.translate(-focus.x, -focus.y);
+      fn();
+      ctx.restore();
+    };
+
+    const blurring = blur > 0.05;
+    if (blurring) ctx.filter = `blur(${blur.toFixed(2)}px)`;
+    place(0, () => this.far.blit(ctx));                 // far wall
+    place(0.35, () => this._lightBox(ctx, now));        // hangs off the ceiling
+    place(1, () => this.near.blit(ctx));                // counter, nearest
+    if (blurring) ctx.filter = 'none';
+
+    // live details that must not be baked
+    if (!blurring) {
+      place(0, () => this._windowSweep(ctx, now));
+      if (hoverId) place(0, () => this._hover(ctx, hoverId, now));
+    }
+
+    const darken = cam?.darken ?? 0;
+    if (darken > 0.001) {
+      ctx.fillStyle = `rgba(0,0,0,${darken})`;
+      ctx.fillRect(0, 0, DESIGN.W, DESIGN.H);
+    }
+
+    // The case being zoomed toward stays sharp and lit while the room falls
+    // away around it — re-blit just that region, unfiltered and undimmed.
+    const fr = cam?.focusRect;
+    if (blurring && fr) {
+      place(0, () => {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(fr.x - 12, fr.y - 12, fr.w + 24, fr.h + 24);
+        ctx.clip();
+        this.far.blit(ctx);
+        ctx.restore();
+      });
+    }
   }
 
   // room shell: ceiling, back wall, floor
@@ -268,7 +337,7 @@ export class Interior {
       if (kind === 'rings') {
         for (let k = 0; k < 5; k++) {
           J.ring(ctx, bx + 34 + k * ((bw - 68) / 4), cy, 13,
-            { gauge: 0.8, gem: true, gemColor: k % 2 ? '#1FA55A' : PALETTE.vermilion });
+            { gauge: 0.8, gem: true, gemColor: k % 2 ? '#1FA55A' : PALETTE.vermilion, ao: true });
         }
       } else {
         const types = ['cross', 'medallion', 'tablet', 'crucifix'];
@@ -422,7 +491,7 @@ export class Interior {
   }
 
   // ── multi-pane window: the storefront seen from inside (reversed) ─────
-  _window(ctx, now) {
+  _window(ctx) {
     const V = WINDOW;
 
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -477,14 +546,6 @@ export class Interior {
     ctx.fillStyle = spill;
     ctx.fillRect(V.x, V.y + V.h * 0.5, V.w, V.h * 0.5);
 
-    // glass reflection sweep
-    const c = 0.3 + 0.06 * Math.sin(now * 0.00019);
-    const sweep = ctx.createLinearGradient(V.x, V.y, V.x + V.w, V.y + V.h);
-    sweep.addColorStop(clamp(c - 0.12, 0, 1), 'rgba(255,255,255,0)');
-    sweep.addColorStop(clamp(c, 0, 1), 'rgba(255,255,255,0.05)');
-    sweep.addColorStop(clamp(c + 0.12, 0, 1), 'rgba(255,255,255,0)');
-    ctx.fillStyle = sweep;
-    ctx.fillRect(V.x, V.y, V.w, V.h);
     ctx.restore();
 
     // mullions: 3 × 4 panes
@@ -507,8 +568,25 @@ export class Interior {
     ctx.strokeRect(V.x, V.y, V.w, V.h);
   }
 
+  /** Slow reflection drifting across the window glass (kept out of the bake). */
+  _windowSweep(ctx, now) {
+    const V = WINDOW;
+    const c = 0.3 + 0.06 * Math.sin(now * 0.00019);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(V.x, V.y, V.w, V.h);
+    ctx.clip();
+    const sweep = ctx.createLinearGradient(V.x, V.y, V.x + V.w, V.y + V.h);
+    sweep.addColorStop(clamp(c - 0.12, 0, 1), 'rgba(255,255,255,0)');
+    sweep.addColorStop(clamp(c, 0, 1), 'rgba(255,255,255,0.05)');
+    sweep.addColorStop(clamp(c + 0.12, 0, 1), 'rgba(255,255,255,0)');
+    ctx.fillStyle = sweep;
+    ctx.fillRect(V.x, V.y, V.w, V.h);
+    ctx.restore();
+  }
+
   // ── L-shaped glass counter, aluminum framed, in the foreground ────────
-  _counter(ctx, now) {
+  _counter(ctx) {
     const back = { x: 96, y: 690, w: 1120, h: 220 };   // long run along the wall
     const wing = { x: 1216, y: 690, w: 470, h: 330 };  // return leg toward us
 
@@ -557,11 +635,11 @@ export class Interior {
       if (i % 2 === 0) {
         for (let k = 0; k < 4; k++) {
           J.ring(ctx, px + 34 + k * ((pw - 68) / 3), cy, 15,
-            { gauge: 0.85, gem: true, gemColor: k % 2 ? PALETTE.vermilion : '#1FA55A' });
+            { gauge: 0.85, gem: true, gemColor: k % 2 ? PALETTE.vermilion : '#1FA55A', ao: true });
         }
       } else {
         for (let k = 0; k < 3; k++) {
-          J.bangle(ctx, px + 46 + k * ((pw - 92) / 2), cy, 40, 16, { gauge: 0.8 });
+          J.bangle(ctx, px + 46 + k * ((pw - 92) / 2), cy, 40, 16, { gauge: 0.8, ao: true });
         }
       }
     }

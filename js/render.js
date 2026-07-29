@@ -2,6 +2,7 @@
 // a labeled gray-box placeholder for every scene element. No assets yet.
 
 import { DESIGN, PALETTE, SCENES, STATES } from './config.js';
+import { Camera } from './camera.js';
 
 export class Renderer {
   /**
@@ -17,9 +18,29 @@ export class Renderer {
     this.chainRail = chainRail;
     this.storefront = storefront;
     this.interior = interior;
+    this.camera = new Camera();
     this._raf = null;
     this._last = 0;
     this._loop = this._loop.bind(this);
+  }
+
+  /**
+   * Push-in through the door. Runs for the whole ENTERING transient, so the
+   * dolly lands exactly as the state machine hands over to INTERIOR.
+   */
+  beginDolly(durationMs = 1100) {
+    const d = this.storefront ? this.storefront.door : null;
+    const focus = d
+      ? { x: d.x + d.w / 2, y: d.y + d.h * 0.5 }
+      : { x: DESIGN.W / 2, y: DESIGN.H / 2 };
+    this.camera.start('dolly', durationMs, focus);
+  }
+
+  /** Smooth zoom toward a clicked case; `onDone` commits the state change. */
+  beginCaseZoom(hotspot, onDone, durationMs = 620) {
+    this.zoomRect = { x: hotspot.x, y: hotspot.y, w: hotspot.w, h: hotspot.h };
+    this.camera.start('zoom', durationMs,
+      { x: hotspot.x + hotspot.w / 2, y: hotspot.y + hotspot.h / 2 }, onDone);
   }
 
   start() { if (!this._raf) this._raf = requestAnimationFrame(this._loop); }
@@ -31,6 +52,11 @@ export class Renderer {
     if (this.gate && this._isGateState()) this.gate.update(dt);
     if (this.chainRail && this.machine.state === STATES.CASE_FOCUS) this.chainRail.update(dt);
     if (this.storefront && this.machine.state === STATES.STOREFRONT) this.storefront.update(dt);
+    this.camera.update(dt);
+    if (this.onCamera) {
+      // ramp the chrome out fast at the start of a move, back in when it ends
+      this.onCamera(this.camera.active ? Math.min(1, this.camera.u * 3) : 0);
+    }
     this.draw(now);
     this._raf = requestAnimationFrame(this._loop);
   }
@@ -47,27 +73,63 @@ export class Renderer {
     const scene = SCENES[this.machine.state];
     if (!scene) return;
 
+    const state = this.machine.state;
+    const dpr = this.stage.dpr;
+    const cam = this.camera;
     this._backdrop(ctx, scene.backdrop);
 
-    if (this.machine.state === STATES.STOREFRONT && this.storefront) {
-      this.storefront.draw(ctx, now, 1);
+    if (state === STATES.STOREFRONT && this.storefront) {
+      // A zoom out of the storefront never happens, so this is the plain view —
+      // unless a case zoom is mid-flight (see INTERIOR below).
+      this.storefront.draw(ctx, now, 1, dpr);
     }
-    // The interior is already there behind the ENTERING wipe — dolly into it.
-    if (this.interior &&
-        (this.machine.state === STATES.INTERIOR || this.machine.state === STATES.ENTERING)) {
-      this.interior.draw(ctx, now, this.getHover ? this.getHover() : null);
+
+    // ── storefront → interior: push-in dolly with layer parallax ──────────
+    if (state === STATES.ENTERING && this.interior) {
+      const p = cam.kind === 'dolly' ? cam.p : this.machine.transitionProgress(now);
+      // The room comes forward from behind, nearer layers growing faster.
+      this.interior.draw(ctx, now, null, dpr, {
+        scale: 0.84 + 0.16 * p,
+        parallax: 0.16 * (1 - p),
+        focus: cam.focus,
+      });
+      // We pass through the storefront: it scales up past us and fades out.
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 - p * 1.25);
+      cam.applyLayer(ctx, 1 + 1.7 * p);
+      if (this.storefront) this.storefront.draw(ctx, now, 1, dpr);
+      ctx.restore();
     }
-    if (this.machine.state === STATES.CASE_FOCUS && this.chainRail) {
+
+    // ── interior (steady, or zooming toward a case) ───────────────────────
+    if (state === STATES.INTERIOR && this.interior) {
+      const zooming = cam.kind === 'zoom';
+      const p = zooming ? cam.p : 0;
+      this.interior.draw(ctx, now, zooming ? null : (this.getHover ? this.getHover() : null), dpr, {
+        scale: 1 + 1.9 * p,
+        parallax: 0.28 * p,          // the counter rushes past faster than the wall
+        focus: cam.focus,
+        blur: 11 * p,
+        darken: 0.62 * p,
+        focusRect: this.zoomRect,
+      });
+    }
+
+    if (state === STATES.CASE_FOCUS && this.chainRail) {
       this.chainRail.draw(ctx, now);
+      // land the zoom: the case settles back from a slight overshoot
+      if (cam.kind === 'zoom') {
+        const q = 1 - cam.p;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, cam.p * 2);
+        cam.applyLayer(ctx, 1 + 0.12 * q);
+        ctx.restore();
+      }
     }
 
     const hover = this.getHover ? this.getHover() : null;
     for (const box of scene.boxes) {
       this._box(ctx, box, box.id === hover);
-    }
-
-    if (this.machine.state === STATES.ENTERING) {
-      this._dolly(ctx, this.machine.transitionProgress(now));
     }
   }
 
@@ -85,7 +147,7 @@ export class Renderer {
 
     this._backdrop(ctx, 'fascia');
     // Reveal-behind: the real storefront, its glow scaling with the gate.
-    if (this.storefront) this.storefront.draw(ctx, now, this.gate.pos);
+    if (this.storefront) this.storefront.draw(ctx, now, this.gate.pos, this.stage.dpr);
 
     this.gate.draw(ctx, now);
     ctx.restore();
@@ -160,11 +222,4 @@ export class Renderer {
     }
   }
 
-  // ── transient cues ──────────────────────────────────────────────────────
-  _dolly(ctx, p) {
-    // Simple push-in vignette to sell walking through the doorway.
-    const { W, H } = DESIGN;
-    ctx.fillStyle = `rgba(0,0,0,${1 - p})`;
-    ctx.fillRect(0, 0, W, H);
-  }
 }

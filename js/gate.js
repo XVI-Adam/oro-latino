@@ -156,6 +156,9 @@ export class Gate {
     const cylH = 46 + pos * h * 0.30;        // roll thickens as slats wind on
     const cylBottom = y + cylH;
 
+    // slat shadows banding whatever the rising gate has revealed
+    this._slatShadows(ctx, railY, sillY);
+
     this._sideTracks(ctx, x, y, w, h);
 
     // warm light spilling out of the opening beneath the rising rail
@@ -291,6 +294,35 @@ export class Gate {
     ctx.fillStyle = '#0e0f12';
     ctx.fillRect(x - 14, y - 12, 8, cylH + 14);
     ctx.fillRect(x + w + 6, y - 12, 8, cylH + 14);
+  }
+
+  /**
+   * Light rakes past the slats and bands the revealed storefront below the
+   * rail. The bands hang off the rail (so they travel with it), soften with
+   * distance, and fade out as the gate finishes opening and the slats wind up.
+   */
+  _slatShadows(ctx, railY, sillY) {
+    if (railY >= sillY - 4 || this.pos <= 0.004) return;
+    const { x, w } = this.rect;
+    const strength = Math.min(1, this.pos * 2.6) * (1 - this.pos * 0.7);
+    if (strength <= 0.01) return;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, railY, w, sillY - railY);
+    ctx.clip();
+    const pitch = this.slatH * 1.18;
+    const bands = Math.ceil((sillY - railY) / pitch);
+    for (let i = 0; i < bands; i++) {
+      const yy = railY + 10 + i * pitch;
+      if (yy > sillY) break;
+      const falloff = 1 - i / (bands + 2);
+      ctx.fillStyle = `rgba(0,0,0,${0.34 * strength * falloff})`;
+      ctx.fillRect(x, yy, w, this.slatH * 0.52);
+      ctx.fillStyle = `rgba(0,0,0,${0.16 * strength * falloff})`;
+      ctx.fillRect(x, yy + this.slatH * 0.52, w, this.slatH * 0.22);
+    }
+    ctx.restore();
   }
 
   _sideTracks(ctx, x, y, w, h) {

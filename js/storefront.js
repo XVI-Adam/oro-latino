@@ -13,6 +13,7 @@
 // rising the window's glow, displays, and sidewalk spill scale with it.
 
 import { DESIGN, PALETTE } from './config.js';
+import { Layer } from './layer.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -38,6 +39,10 @@ export class Storefront {
     this.draggingDoor = false;
     this._sx = 0; this._sp = 0; this._target = 0;
     this.entered = false;
+
+    // Static content (sign, window interior, trays, frame) baked once at full
+    // brightness; the gate's `reveal` is applied as a dynamic dim on top.
+    this.bg = new Layer();
 
     this._layout();
   }
@@ -101,16 +106,30 @@ export class Storefront {
   }
 
   // ── rendering ───────────────────────────────────────────────────────────
-  draw(ctx, now, reveal = 1) {
-    this._sign(ctx);
-    this._windowInterior(ctx, reveal);
+  draw(ctx, now, reveal = 1, dpr = 1) {
+    // bake the static scene once
+    if (this.bg.ensure(dpr)) {
+      const c = this.bg.begin();
+      this._sign(c);
+      this._windowInterior(c, 1);
+      this._displays(c);
+      this._frame(c);
+      this.bg.done();
+    }
+    this.bg.blit(ctx);
+
+    // the gate is still down → dim the window rather than re-baking it
+    if (reveal < 0.995) {
+      const { x, y, w, h } = this.rect;
+      ctx.fillStyle = `rgba(0,0,0,${(1 - reveal) * 0.62})`;
+      ctx.fillRect(x, y, w, h);
+    }
+
     if (reveal > 0.01) {
-      this._displays(ctx);
       this.chains.draw(ctx, now);
       this._door(ctx, now);
       this._glass(ctx, now, reveal);
     }
-    this._frame(ctx);
     this._spill(ctx, reveal);
   }
 
@@ -217,7 +236,7 @@ export class Storefront {
       for (let r = 0; r < 2; r++) {
         for (let c = 0; c < 3; c++) {
           J.ring(ctx, t.x + 34 + c * 54, t.y + 36 + r * 56, 15,
-            { gauge: 0.85, gem: dark, gemColor: '#E23A2E' });
+            { gauge: 0.85, gem: dark, gemColor: '#E23A2E', ao: true });
         }
       }
     }
@@ -229,14 +248,14 @@ export class Storefront {
     for (let r = 0; r < 3; r++) {
       for (let c = 0; c < 3; c++) {
         J.ring(ctx, n.x + 46 + c * 88, n.y + 48 + r * 94, 19,
-          { gauge: 1, gem: true, gemColor: k++ % 2 === 0 ? '#1FA55A' : PALETTE.vermilion });
+          { gauge: 1, gem: true, gemColor: k++ % 2 === 0 ? '#1FA55A' : PALETTE.vermilion, ao: true });
       }
     }
 
     // bangle cluster front-center
     const b = this.banglesAt;
     for (let i = 0; i < 6; i++) {
-      J.bangle(ctx, b.x + i * 52 - 30, b.y + (i % 2) * 10, 52, 20, { gauge: 0.9 });
+      J.bangle(ctx, b.x + i * 52 - 30, b.y + (i % 2) * 10, 52, 20, { gauge: 0.9, ao: true });
     }
   }
 

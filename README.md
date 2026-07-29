@@ -109,6 +109,28 @@ single CSS transform and letterboxed (`js/stage.js`).
 Interactive boxes carry a `to:` state in `config.js`, get a vermilion dot +
 gold hover border on the canvas, and are click/hover hit-tested in `js/main.js`.
 
+## Cinematics, shadows & compositing
+
+- **Transitions** (`js/camera.js`) — `STOREFRONT → INTERIOR` is a **push-in
+  dolly**: the storefront scales up past the viewer and fades while the room
+  comes forward from behind, its layers scaling at different rates (parallax).
+  `INTERIOR → CASE_FOCUS` is a **smooth zoom** toward the clicked case while
+  the rest of the room blurs and darkens — the target case is re-blitted sharp
+  and undimmed so it reads as a focus pull. In-scene DOM chrome fades out
+  during a move, since DOM can't zoom with the canvas.
+- **Physical shadows** — every hanging chain casts a **soft contact shadow**:
+  an offset silhouette of the actual chain (three widening strokes, no
+  `ctx.filter`), tight where it meets its holder, spreading toward the tip, and
+  **trailing the swing** — the further a particle is from its rest position,
+  the further its shadow separates. The gate casts **slat shadows** that band
+  the revealed storefront and fade as it finishes opening. Pieces resting on
+  velvet get **tight ambient occlusion** at their base (`jewelry.ao`).
+- **Pre-compositing** (`js/layer.js`) — each scene bakes its static content to
+  an offscreen design-sized canvas, so steady-state frames are `drawImage` plus
+  dynamic overlays. The interior bakes **two** layers (far wall / near counter)
+  so the parallax and the transition blur each cost one extra `drawImage`
+  rather than a full redraw.
+
 ## Palette
 
 | Token | Hex | Use |

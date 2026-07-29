@@ -51,6 +51,18 @@ export class Overlay {
     for (const [key, el] of this._caseEls) el.classList.toggle('is-hover', key === id);
   }
 
+  /**
+   * Fade the in-scene chrome (case labels, hint) while the camera moves — DOM
+   * can't be zoomed with the canvas, so crisp labels over a pushing scene read
+   * as stuck. 0 = fully visible, 1 = gone.
+   */
+  setChromeFade(t) {
+    const a = String(Math.max(0, 1 - t));
+    this.caseLabels.style.opacity = a;
+    const hint = this.actionBar.querySelector('.hint');
+    if (hint) hint.style.opacity = a;
+  }
+
   _buildRoute() {
     this.routeList.innerHTML = '';
     for (const stop of ROUTE) {

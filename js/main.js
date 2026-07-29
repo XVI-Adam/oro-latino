@@ -1,7 +1,7 @@
 // main.js — bootstrap. Wires the stage, state machine, procedural gate,
 // renderer, DOM overlay, debug panel, and all pointer/scroll input.
 
-import { GATE_RECT, SCENES, STATES } from './config.js';
+import { GATE_RECT, SCENES, STATES, TRANSIENTS } from './config.js';
 import { Stage } from './stage.js';
 import { StateMachine } from './state.js';
 import { Gate } from './gate.js';
@@ -53,6 +53,10 @@ let hoverId = null;
 const renderer = new Renderer(stage, machine, () => hoverId, gate, chainRail, storefront, interior);
 const overlay = new Overlay(machine, handleAction);
 overlay.setHotspots(interior.hotspots);
+
+// Keep the DOM chrome in step with the camera: it can't zoom with the canvas,
+// so fade it out while a transition is running.
+renderer.onCamera = (t) => overlay.setChromeFade(t);
 new DebugPanel(machine, (state) => machine.go(state));
 
 const isGateState = () =>
@@ -69,6 +73,8 @@ machine.onChange((state) => {
   if (state !== STATES.CASE_FOCUS) chainRail.clearCursor();
   if (state !== STATES.STOREFRONT) windowChains.clearCursor();
   if (state === STATES.STOREFRONT) storefront.reset();
+  // Step through the door: run the push-in for the whole ENTERING transient.
+  if (state === STATES.ENTERING) renderer.beginDolly(TRANSIENTS[STATES.ENTERING].duration);
   if (state === STATES.GATE_CLOSED) {
     gate.reset(0);
     canvas.style.cursor = 'grab';
@@ -126,7 +132,11 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   if (isInterior()) {
     const spot = interior.hitTest(x, y);
-    if (spot && spot.to) machine.go(spot.to);
+    // zoom toward the case first; the state change lands when the move ends
+    if (spot && spot.to && renderer.camera.kind !== 'zoom') {
+      overlay.setHotspotHover(null);
+      renderer.beginCaseZoom(spot, () => machine.go(spot.to));
+    }
     return;
   }
   const hit = boxAt(x, y);
@@ -154,6 +164,7 @@ window.addEventListener('pointermove', (e) => {
     return;
   }
   if (isInterior()) {
+    if (renderer.camera.kind === 'zoom') return; // don't fight the transition
     const spot = interior.hitTest(x, y);
     hoverId = spot ? spot.id : null;
     overlay.setHotspotHover(hoverId);

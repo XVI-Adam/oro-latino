@@ -309,14 +309,54 @@ class Chain {
   // ── rendering ─────────────────────────────────────────────────────────
   draw(ctx, jewelry) {
     const P = this.particles;
+    this._contactShadow(ctx);
     this._disc(ctx);
     jewelry.strokeChain(ctx, P, this.style, this.gauge);
     if (this.pendantType) {
       const p = P[this.pendant];
       const a = P[this.pendant - 1], b = P[this.pendant + 1];
       const ang = Math.atan2(p.y - (a.y + b.y) / 2, p.x - (a.x + b.x) / 2);
+      // tight AO where the pendant rests against the velvet backing
+      jewelry.ao(ctx, p.x, p.y + 16 * this.gauge, 20 * this.gauge, 8 * this.gauge, 0.5);
       jewelry.stampPendant(ctx, this.pendantType, p.x, p.y, ang, this.gauge);
     }
+  }
+
+  /**
+   * Soft contact shadow cast on the case backing — an offset silhouette of the
+   * actual chain, not a static blob. It stays tight where the chain touches its
+   * holder and separates further down, and it slides with the swing: the more a
+   * particle is displaced from its rest position, the further its shadow trails.
+   */
+  _contactShadow(ctx) {
+    const P = this.particles, rp = this.restPose;
+    if (!rp) return;
+    const g = this.gauge;
+    const pts = new Array(P.length);
+    for (let i = 0; i < P.length; i++) {
+      const drop = Math.sin(Math.PI * P[i].t);       // 0 at the pins, 1 at the tip
+      const swing = P[i].x - rp[i].x;                // displacement drives separation
+      const off = (2.5 + 9 * drop) * g;
+      pts[i] = { x: P[i].x + off * 0.6 + swing * 0.26, y: P[i].y + off };
+    }
+    // three widening passes read as a blur without paying for ctx.filter
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const w = 6 * g;
+    for (const [mult, alpha] of [[2.9, 0.05], [1.9, 0.07], [1.15, 0.10]]) {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+      }
+      ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+      ctx.lineWidth = w * mult;
+      ctx.strokeStyle = `rgba(0,0,0,${alpha})`;
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   _disc(ctx) {
