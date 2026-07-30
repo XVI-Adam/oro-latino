@@ -188,12 +188,12 @@ export class LinkAtlas {
    * @param {string} variant key into VARIANTS
    * @param {number} dpr     device pixel ratio (atlas renders at >= 2x this)
    */
-  constructor(variant, tier = 2) {
-    const meta = VARIANTS[variant];
-    const ss = tier;
+  constructor(variant, ss = 2, table = VARIANTS, baseGauge = BASE_MM * PX_PER_MM) {
+    const meta = table[variant];
     // footprint in design px at BASE_MM, then supersampled
-    this.designW = meta.wMM * BASE_MM * PX_PER_MM;
-    this.designH = meta.hMM * BASE_MM * PX_PER_MM;
+    this.baseGauge = baseGauge;
+    this.designW = meta.wMM * baseGauge;
+    this.designH = meta.hMM * baseGauge;
     const diag = Math.ceil(Math.hypot(this.designW, this.designH) * ss) + 8;
     this.diag = diag;
     this.designSize = diag / ss;
@@ -204,7 +204,7 @@ export class LinkAtlas {
     const atlas = this.canvas.getContext('2d');
 
     // Scale that turns the variant's mm numbers into supersampled pixels.
-    const S = BASE_MM * PX_PER_MM * ss;
+    const S = baseGauge * ss;
 
     // Each rotation is composed in its own cell buffer so the specular and
     // occlusion passes can use source-atop against just this link.
@@ -274,11 +274,11 @@ export class LinkAtlas {
    * @param {number} mm         real gauge in millimetres
    * @param {number} along      compression along the path tangent (curvature)
    */
-  stamp(ctx, x, y, angle, mm, along = 1) {
+  stamp(ctx, x, y, angle, gaugePx, along = 1) {
     let b = Math.round((((angle % PI2) + PI2) % PI2) / PI2 * N_ROT) % N_ROT;
     const col = b % this.cols, row = (b / this.cols) | 0;
     const src = this.diag;
-    const dst = this.designSize * (mm / BASE_MM);
+    const dst = this.designSize * (gaugePx / this.baseGauge);
 
     // Only a real bend earns a transform; mild squeeze is imperceptible and
     // a plain drawImage keeps the frame loop free of save/restore churn.
@@ -313,9 +313,9 @@ export class RunAtlas {
    * @param {string} style
    * @param {(ctx:CanvasRenderingContext2D, seq:object, x:number, ss:number)=>void} stampLink
    */
-  constructor(style, ss, buildStrip, count = RUN_LINKS) {
-    const layout = STYLES[style];
-    const gaugePx = BASE_MM * PX_PER_MM;
+  constructor(style, ss, buildStrip, count = RUN_LINKS, styles = STYLES, baseGauge = BASE_MM * PX_PER_MM) {
+    const layout = styles[style];
+    const gaugePx = baseGauge;
     // advance per link, in design px at BASE_MM
     let len = 0;
     for (let i = 0; i < count; i++) len += layout.seq(i).pitch * gaugePx;
@@ -324,7 +324,8 @@ export class RunAtlas {
 
     // tallest variant in the sequence decides the strip height
     let hMM = 0;
-    for (let i = 0; i < count; i++) hMM = Math.max(hMM, VARIANTS[layout.seq(i).v].hMM);
+    const table = styles === STYLES ? VARIANTS : GFX_VARIANTS;
+    for (let i = 0; i < count; i++) hMM = Math.max(hMM, table[layout.seq(i).v].hMM);
     const hDesign = hMM * gaugePx * 1.25;
 
     const diag = Math.ceil(Math.hypot(len, hDesign) * ss) + 8;
@@ -359,4 +360,158 @@ export class RunAtlas {
     ctx.drawImage(this.canvas, col * src, row * src, src, src,
       x - dst / 2, y - dst / 2, dst, dst);
   }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GRAPHIC TIER — the case-level look.
+//
+// At case scale a photographic link is wasted: it's 6px of gold competing with
+// 500 neighbours. This tier trades micro-detail for a bolder, calmer read —
+// bigger links, far fewer of them, and 3–4 flat value steps instead of a
+// continuous metallic ramp. The alternating face/edge interlock is kept, since
+// that is what makes a chain read as a chain rather than a string of beads.
+//
+// Sizes here are PIXELS, not millimetres: real mm still lives in the piece data
+// and the tag copy, but the drawn size comes from graphicGauge().
+
+export const BASE_GFX_PX = 26;        // graphic sprites are authored at this size
+
+/**
+ * Compress the real 3–12mm range into a drawn 16–34px range. A power curve, so
+ * a heavy Cuban still clearly outweighs a fine rope but the ratio falls from
+ * ~4x to ~2.1x and the whole rail sits in one visual family.
+ */
+export function graphicGauge(mm) {
+  const m = clamp(Number(mm) || 4, 3, 12);
+  const t = (m - 3) / 9;                       // 0…1 across the real range
+  return 16 + 18 * Math.pow(t, 0.55);          // 16px … 34px
+}
+
+// Four flat steps. No gradients at draw time and none baked either — the whole
+// point is that you can see the steps.
+const G_EDGE = '#4A3008';    // dark contour
+const G_MID = '#C9962E';     // body
+const G_BRIGHT = '#F0D275';  // lit band
+const G_SPEC = '#FFFBEE';    // the single crisp dot
+
+/** A face-on ring: flat body, one bright band, hard contour. */
+function gfxRingFace(ctx, rx, ry, thick, S) {
+  const RX = rx * S, RY = ry * S, T = thick * S;
+  ctx.lineCap = 'round';
+  // contour first, slightly fatter — reads as a drawn outline
+  ctx.lineWidth = T + Math.max(2, T * 0.30);
+  ctx.strokeStyle = G_EDGE;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, RX, RY, 0, 0, PI2);
+  ctx.stroke();
+  // body
+  ctx.lineWidth = T;
+  ctx.strokeStyle = G_MID;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, RX, RY, 0, 0, PI2);
+  ctx.stroke();
+  // lit band across the top-left third of the ring
+  ctx.lineWidth = T * 0.42;
+  ctx.strokeStyle = G_BRIGHT;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, RX, RY, 0, Math.PI * 1.02, Math.PI * 1.72);
+  ctx.stroke();
+}
+
+/** The same ring turned edge-on: a clean capsule, one bright edge. */
+function gfxRingEdge(ctx, len, thick, S) {
+  const L = len * S, T = thick * S;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = T + Math.max(2, T * 0.30);
+  ctx.strokeStyle = G_EDGE;
+  ctx.beginPath();
+  ctx.moveTo(-L / 2, 0); ctx.lineTo(L / 2, 0);
+  ctx.stroke();
+  ctx.lineWidth = T;
+  ctx.strokeStyle = G_MID;
+  ctx.beginPath();
+  ctx.moveTo(-L / 2, 0); ctx.lineTo(L / 2, 0);
+  ctx.stroke();
+  ctx.lineWidth = T * 0.34;
+  ctx.strokeStyle = G_BRIGHT;
+  ctx.beginPath();
+  ctx.moveTo(-L / 2 + T * 0.3, -T * 0.26); ctx.lineTo(L / 2 - T * 0.3, -T * 0.26);
+  ctx.stroke();
+}
+
+function gfxBoxFace(ctx, size, thick, S) {
+  const H = (size * S) / 2, T = thick * S, R = H * 0.34;
+  const path = () => {
+    ctx.beginPath();
+    ctx.moveTo(-H + R, -H);
+    ctx.arcTo(H, -H, H, H, R);
+    ctx.arcTo(H, H, -H, H, R);
+    ctx.arcTo(-H, H, -H, -H, R);
+    ctx.arcTo(-H, -H, H, -H, R);
+    ctx.closePath();
+  };
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = T + Math.max(2, T * 0.30);
+  ctx.strokeStyle = G_EDGE; path(); ctx.stroke();
+  ctx.lineWidth = T;
+  ctx.strokeStyle = G_MID; path(); ctx.stroke();
+  ctx.lineWidth = T * 0.40;
+  ctx.strokeStyle = G_BRIGHT;
+  ctx.beginPath();
+  ctx.moveTo(-H + R, -H); ctx.lineTo(H - R, -H);
+  ctx.stroke();
+}
+
+// Footprints are multiples of the drawn gauge, same convention as the mm tier.
+// Footprints are ~1.7x the mm tier's: at case level a link should be a shape
+// you can read, not a texture. Wide pitch plus wide links keeps the ~25%
+// overlap that makes the weave legible.
+export const GFX_VARIANTS = {
+  cubanFace: { wMM: 2.60, hMM: 1.95, draw: (c, S) => gfxRingFace(c, 1.06, 0.76, 0.42, S) },
+  cubanEdge: { wMM: 1.70, hMM: 0.78, draw: (c, S) => gfxRingEdge(c, 1.32, 0.44, S) },
+  ropeFace:  { wMM: 1.95, hMM: 1.62, draw: (c, S) => gfxRingFace(c, 0.78, 0.64, 0.40, S) },
+  ropeEdge:  { wMM: 1.48, hMM: 0.74, draw: (c, S) => gfxRingEdge(c, 1.10, 0.40, S) },
+  boxFace:   { wMM: 1.86, hMM: 1.86, draw: (c, S) => gfxBoxFace(c, 1.44, 0.40, S) },
+  boxEdge:   { wMM: 1.38, hMM: 0.78, draw: (c, S) => gfxRingEdge(c, 1.00, 0.42, S) },
+  figShortFace: { wMM: 1.76, hMM: 1.52, draw: (c, S) => gfxRingFace(c, 0.70, 0.60, 0.38, S) },
+  figShortEdge: { wMM: 1.34, hMM: 0.72, draw: (c, S) => gfxRingEdge(c, 0.96, 0.38, S) },
+  figLongFace:  { wMM: 2.90, hMM: 1.52, draw: (c, S) => gfxRingFace(c, 1.26, 0.60, 0.38, S) },
+  figLongEdge:  { wMM: 1.48, hMM: 0.72, draw: (c, S) => gfxRingEdge(c, 1.06, 0.38, S) },
+};
+
+// Much wider pitch than the mm tier: fewer, larger, calmer links.
+// Pitch is ~1.0x gauge — roughly double the mm tier — so link counts fall hard
+// while the enlarged footprints keep the faces overlapping.
+export const GFX_STYLES = {
+  cuban:  { period: 2, seq: (i) => (i % 2 === 0
+    ? { v: 'cubanFace', pitch: 1.02, ang: 0, edge: false }
+    : { v: 'cubanEdge', pitch: 1.02, ang: 0, edge: true }) },
+  rope:   { period: 2, seq: (i) => (i % 2 === 0
+    ? { v: 'ropeFace', pitch: 0.80, ang: 0.42, edge: false }
+    : { v: 'ropeEdge', pitch: 0.80, ang: -0.42, edge: true }) },
+  box:    { period: 2, seq: (i) => (i % 2 === 0
+    ? { v: 'boxFace', pitch: 0.92, ang: 0, edge: false }
+    : { v: 'boxEdge', pitch: 0.92, ang: 0, edge: true }) },
+  figaro: { period: 8, seq: (i) => {
+    const m = i % 8;
+    if (m === 6) return { v: 'figLongFace', pitch: 1.55, ang: 0, edge: false };
+    if (m === 7) return { v: 'figLongEdge', pitch: 1.00, ang: 0, edge: true };
+    return m % 2 === 0
+      ? { v: 'figShortFace', pitch: 0.86, ang: 0, edge: false }
+      : { v: 'figShortEdge', pitch: 0.86, ang: 0, edge: true };
+  } },
+};
+
+/** Tier descriptor: which tables to use and what the sprites were authored at. */
+export function tierSpec(tier) {
+  // A run strip has to be baked into a square cell big enough to rotate in, so
+  // its memory grows with the SQUARE of the strip length. The graphic tier's
+  // links are ~1.7x wider, which made 8-link strips cost ~12MB apiece — so it
+  // uses 4-link strips at 1.5x source instead. Same look, a fraction of the VRAM.
+  return tier === 'detail'
+    ? { variants: VARIANTS, styles: STYLES, baseGauge: BASE_MM * PX_PER_MM,
+        ss: 2, runLinks: 8 }
+    : { variants: GFX_VARIANTS, styles: GFX_STYLES, baseGauge: BASE_GFX_PX,
+        ss: 1.5, runLinks: 4 };
 }

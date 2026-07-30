@@ -12,7 +12,8 @@
 // zero required image dependencies.
 
 import { LinkAtlas, RunAtlas, STYLES, VARIANTS, visualMM, PX_PER_MM, LIGHT_ANGLE,
-         BASE_MM, RUN_LINKS, MAX_LINKS_PER_CHAIN, supersampleFor } from './links.js';
+         BASE_MM, RUN_LINKS, MAX_LINKS_PER_CHAIN, supersampleFor,
+         graphicGauge, tierSpec } from './links.js';
 import { perf } from './perf.js';
 
 const BASE_MM_PX = 8 * PX_PER_MM;
@@ -75,10 +76,13 @@ export class Jewelry {
     if (d !== this.dpr) { this.dpr = d; this.links.clear(); this.runs.clear(); this.pendants.clear(); }
   }
 
-  _link(variant, tier = 2) {
-    const key = `${variant}@${tier}`;
+  _link(variant, spec, tierName) {
+    const key = `${tierName}:${variant}`;
     let rc = this.links.get(key);
-    if (!rc) { rc = new LinkAtlas(variant, tier); this.links.set(key, rc); }
+    if (!rc) {
+      rc = new LinkAtlas(variant, spec.ss, spec.variants, spec.baseGauge);
+      this.links.set(key, rc);
+    }
     return rc;
   }
 
@@ -94,14 +98,14 @@ export class Jewelry {
    * the local curvature should foreshorten it. Shared by the stamping passes
    * and the glint pass so they can never disagree about link placement.
    */
-  _layout(P, layout, mm) {
+  _layout(P, layout, gaugePx) {
     const n = P.length;
     if (n < 2) return [];
     // Cap the link count: a 2.5mm rope over a 1100px path would otherwise want
     // ~1000 links. Stretch the pitch instead — at this gauge nobody can count.
     let pathLen = 0;
     for (let i = 0; i < n - 1; i++) pathLen += Math.hypot(P[i+1].x - P[i].x, P[i+1].y - P[i].y);
-    const nominalPitch = layout.seq(0).pitch * mm * PX_PER_MM;
+    const nominalPitch = layout.seq(0).pitch * gaugePx;
     const wanted = pathLen / Math.max(nominalPitch, 0.01);
     const stretch = wanted > MAX_LINKS_PER_CHAIN ? wanted / MAX_LINKS_PER_CHAIN : 1;
 
@@ -116,7 +120,7 @@ export class Jewelry {
 
     const out = [];
     let idx = 0;
-    const mmPx = mm * PX_PER_MM * stretch;     // gauge in pixels, pitch-capped
+    const mmPx = gaugePx * stretch;            // already px; pitch-capped
     let need = layout.seq(0).pitch * mmPx * 0.5;
     for (let s = 0; s < n - 1; s++) {
       const ax = P[s].x, ay = P[s].y;
@@ -166,16 +170,15 @@ export class Jewelry {
    * narrow clip so their shanks read as passing *through* the rings.
    */
   /** Baked run-strip for a style, at the supersample tier its gauge deserves. */
-  _run(style, mm, count = RUN_LINKS) {
-    const tier = supersampleFor(mm);
-    const key = `${style}@${tier}x${count}`;
+  _run(style, spec, tierName, count = 8) {
+    const key = `${tierName}:${style}x${count}`;
     let r = this.runs.get(key);
     if (!r) {
-      const layout = STYLES[style];
+      const layout = spec.styles[style];
       // The strip is built with the same three-pass interlock the single-link
       // path used — but ONCE, at bake time, so the clip never costs a frame.
       const build = (c, x0, ss) => {
-        const gaugePx = BASE_MM_PX * ss;
+        const gaugePx = spec.baseGauge * ss;
         const pos = [];
         let x = x0;
         for (let i = 0; i < count; i++) {
@@ -184,7 +187,7 @@ export class Jewelry {
           pos.push({ seq, x: x - seq.pitch * gaugePx * 0.5 });
         }
         const drawOne = (seq, px) => {
-          const a = this._link(seq.v, tier);
+          const a = this._link(seq.v, spec, tierName);
           const src = a.diag, dst = a.designSize * ss;
           const b = Math.round((((seq.ang % PI2) + PI2) % PI2) / PI2 * a.rotSteps) % a.rotSteps;
           const col = b % a.cols, row = (b / a.cols) | 0;
@@ -204,7 +207,7 @@ export class Jewelry {
           c.restore();
         }
       };
-      r = new RunAtlas(style, tier, build, count);
+      r = new RunAtlas(style, spec.ss, build, count, spec.styles, spec.baseGauge);
       this.runs.set(key, r);
     }
     return r;
@@ -218,32 +221,42 @@ export class Jewelry {
    * genuinely curved stretches fall back to individual links, where a strip
    * would visibly bend the wrong way.
    */
-  strokeChain(ctx, P, style, mm = 4, depth = 1, cull = null) {
+  /**
+   * Draw a chain.
+   *
+   * @param {number} mm    the piece's real gauge — still the source of truth
+   * @param {string} tier  'graphic' (case level: bold, few, flat-shaded)
+   *                       'detail'  (piece view: full metallic, dense)
+   *
+   * Real millimetres stay in the data and on the tag; the *drawn* size comes
+   * from graphicGauge() at case level, which compresses 3–12mm into 16–34px.
+   */
+  strokeChain(ctx, P, style, mm = 4, depth = 1, cull = null, tier = 'graphic') {
     this._checkDpr();
-    const layout = STYLES[style] || STYLES.rope;
-    const g = visualMM(mm) * depth;
+    const spec = tierSpec(tier);
+    const layout = spec.styles[style] || spec.styles.rope;
+    const g = (tier === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm)) * depth;
     const links = this._layout(P, layout, g);
     if (!links.length) return;
 
-    this._core(ctx, P, g * PX_PER_MM * 0.85, 'rgba(0,0,0,0.22)');
-    this._core(ctx, P, g * PX_PER_MM * 0.34, 'rgba(52,34,4,0.9)');
+    this._core(ctx, P, g * 0.72, 'rgba(0,0,0,0.24)');
+    this._core(ctx, P, g * 0.30, 'rgba(46,30,4,0.92)');
 
-    const runLong = this._run(style, g, RUN_LINKS);
+    const longLen = spec.runLinks;
+    const runLong = this._run(style, spec, tier, longLen);
     const period = layout.period || 2;
-    // A short strip fits a gentler curve than a long one, so try 8 then 4.
-    const shortLen = (RUN_LINKS % 2 === 0 && period <= 4) ? RUN_LINKS / 2 : 0;
-    const runShort = shortLen ? this._run(style, g, shortLen) : null;
-    const scale = (g / BASE_MM) * (this.runQuality || 1);
-    // The run atlas quantises to 16 steps (22.5deg). Stamping at the window's
-    // average angle means the worst per-link error is ANG_TOL/2, so anything
-    // below ~0.5 rad adds no error beyond the quantisation already present.
+    const shortLen = (period <= 4 && longLen >= 8) ? longLen / 2 : 0;
+    const runShort = shortLen ? this._run(style, spec, tier, shortLen) : null;
+    // RunAtlas.stamp wants a RATIO against the size the strip was authored at,
+    // not an absolute gauge.
+    const scale = (g / spec.baseGauge) * (this.runQuality || 1);
     const ANG_TOL = 0.50;
 
     const fits = (i, len, tol) => {
       if (i + len > links.length || i % period !== 0) return false;
       let minA = Infinity, maxA = -Infinity;
       for (let k = i; k < i + len; k++) {
-        if (links[k].squeeze < 0.86) return false;   // matches the plain-stamp cutoff
+        if (links[k].squeeze < 0.86) return false;
         if (links[k].pa < minA) minA = links[k].pa;
         if (links[k].pa > maxA) maxA = links[k].pa;
       }
@@ -259,17 +272,30 @@ export class Jewelry {
 
     let i = 0;
     while (i < links.length) {
-      if (fits(i, RUN_LINKS, ANG_TOL)) { stampRun(runLong, i, RUN_LINKS); i += RUN_LINKS; continue; }
+      if (fits(i, longLen, ANG_TOL)) { stampRun(runLong, i, longLen); i += longLen; continue; }
       if (runShort && fits(i, shortLen, ANG_TOL * 1.5)) {
         stampRun(runShort, i, shortLen); i += shortLen; continue;
       }
       const L = links[i];
       if (!cull || (L.x > cull.x0 && L.x < cull.x1 && L.y > cull.y0 && L.y < cull.y1)) {
-        this._link(L.v, supersampleFor(g)).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+        this._link(L.v, spec, tier).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
         perf.links++;
       }
       i++;
     }
+  }
+
+  /** How many links a chain resolves to at a given tier — for the HUD. */
+  linkCount(P, style, mm, depth = 1, tier = 'graphic') {
+    const spec = tierSpec(tier);
+    const g = (tier === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm)) * depth;
+    return this._layout(P, spec.styles[style] || spec.styles.rope, g).length;
+  }
+
+  /** Release every sprite built for a tier (detail LOD unloads on exit). */
+  releaseTier(tier) {
+    for (const k of [...this.links.keys()]) if (k.startsWith(tier + ':')) this.links.delete(k);
+    for (const k of [...this.runs.keys()]) if (k.startsWith(tier + ':')) this.runs.delete(k);
   }
 
   /**
@@ -277,10 +303,11 @@ export class Jewelry {
    * @param {number} centre index of the brightest link
    * @param {number} span   how many links either side pick up the sweep
    */
-  glintChain(ctx, P, style, mm = 4, centre = 0, span = 2, strength = 1, depth = 1) {
+  glintChain(ctx, P, style, mm = 4, centre = 0, span = 2, strength = 1, depth = 1, tier = 'graphic') {
     this._checkDpr();
-    const layout = STYLES[style] || STYLES.rope;
-    const g = visualMM(mm) * depth;
+    const spec = tierSpec(tier);
+    const layout = spec.styles[style] || spec.styles.rope;
+    const g = (tier === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm)) * depth;
     const links = this._layout(P, layout, g);
     if (!links.length) return;
 
@@ -293,14 +320,16 @@ export class Jewelry {
       const facing = 0.55 + 0.45 * Math.cos(L.a - LIGHT_ANGLE);
       const fall = 1 - d / (span + 1);
       ctx.globalAlpha = Math.max(0, fall * fall * facing * 0.5 * strength);
-      this._link(L.v, supersampleFor(g)).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+      this._link(L.v, spec, tier).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
     }
     ctx.restore();
   }
 
   /** Where along the chain the links are — used to place sparkles. */
-  linkPositions(P, style, mm = 4, depth = 1) {
-    return this._layout(P, STYLES[style] || STYLES.rope, visualMM(mm) * depth);
+  linkPositions(P, style, mm = 4, depth = 1, tier = 'graphic') {
+    const spec = tierSpec(tier);
+    const g = (tier === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm)) * depth;
+    return this._layout(P, spec.styles[style] || spec.styles.rope, g);
   }
 
   /**

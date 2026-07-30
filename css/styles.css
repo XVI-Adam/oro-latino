@@ -69,6 +69,17 @@ html, body {
   top: 56px;
   left: 56px;
 }
+/* The rail spans most of the case, so in CASE_FOCUS both corners tuck in and
+   sit on a scrim — the rail is inset to meet them and never runs underneath. */
+body[data-scene="CASE_FOCUS"] #route-index,
+body[data-scene="CASE_FOCUS"] #scene-plate {
+  padding: 14px 18px;
+  background: rgba(9, 14, 26, 0.72);
+  border-radius: 4px;
+  backdrop-filter: blur(3px);
+}
+body[data-scene="CASE_FOCUS"] #route-index { top: 44px; left: 40px; }
+body[data-scene="CASE_FOCUS"] #scene-plate { top: 44px; right: 40px; }
 #route-list {
   list-style: none;
   margin: 0;

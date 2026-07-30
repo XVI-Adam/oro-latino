@@ -51,8 +51,10 @@ for (const p of inventory.pieces) p.renderGauge = renderGauge(p);
 
 // A quick tap on a chain or its price tag opens that piece's detail card.
 const chainRail = new ChainRail(stage, jewelry, (i) => openPiece(i), {
-  railY: 158, x0: 190, x1: DESIGN.W - 190, seed: 1337, scale: 1.22, dropScale: 1.45,
-  pieces: inventory.pieces, tags: true,
+  // 9 pieces at the new graphic scale, rail near the top edge, long hangs so
+  // chains and pendants own the lower two-thirds.
+  railY: 128, x0: 296, x1: DESIGN.W - 296, seed: 1337, scale: 1.35, dropScale: 1.62,
+  pieces: inventory.pieces, visible: 9, tags: true,
   quality: QUALITY, reducedMotion, coarsePointer: COARSE,
 });
 

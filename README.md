@@ -130,6 +130,28 @@ chains hang, their link style, visual gauge (derived from the real `gauge_mm`),
 and pendant. `js/inventory.js` loads it and falls back to a small built-in set
 if the file is missing, so the page still runs.
 
+## Two rendering tiers
+
+The case and the piece view now want opposite things, so they get different art.
+
+**Graphic tier — the case.** At case scale a photographic link is 6px of gold
+competing with hundreds of neighbours. This tier trades micro-detail for a
+bolder read: `graphicGauge(mm)` compresses the real 3–12mm range into a drawn
+**16–34px** on a power curve, so a heavy Cuban still clearly outweighs a fine
+rope but the ratio falls from ~4x to **2.1x** and the rail sits in one visual
+family. Links are ~1.7x wider than the mm tier with **4 flat value steps** —
+dark contour, mid body, lit band, one crisp specular dot — and pitch roughly
+doubles. Real millimetres stay in `pieces.json` and on the tag ("Cubana 8mm").
+
+**Detail tier — the piece view.** `PIECE_DETAIL` promotes the selected chain to
+the full metallic atlas from the section below: continuous gradients, migrating
+hotspots, ~7x the link count. The camera lifts it to **2.7x** over ~600ms while
+a depth-of-field blur drops the case behind it. Detail sprites build lazily on
+entry and are released on exit, so idle atlas memory never carries them.
+
+The case shows **9 pieces** at the new scale with generous spacing; the rest stay
+in `pieces.json` for a future horizontally-draggable rail.
+
 ## The metal
 
 Link rendering is its own module (`js/links.js`), still sprite-atlas based:
@@ -173,6 +195,17 @@ exactly); route **numerals flip** on scene change; and optional procedural
 
 Loading is instant because everything is drawn, not fetched. Photo cutouts are
 lazy-swapped in as they arrive (see the asset pipeline above).
+
+### Tier + composition pass numbers
+
+| | before | after |
+|---|---|---|
+| chains in frame | 14 | **9** |
+| links per chain | 80–183 | **49–107** |
+| stamps/frame, 3 chains awake | 936 | **215** |
+| composite re-bake | 12.2ms | **4.5ms** |
+| atlas at idle | 4.1MB | 13.4MB (graphic + detail tiers) |
+| detail LOD | — | 3.1ms / 148 stamps, unloads to 13.4MB |
 
 ### Perf HUD
 

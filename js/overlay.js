@@ -96,6 +96,7 @@ export class Overlay {
   update(state) {
     const scene = SCENES[state];
     if (!scene) return;
+    document.body.dataset.scene = state;   // lets CSS inset chrome per scene
 
     // Scene plate — restart the numeral animation on every change.
     const changed = this.numeral.textContent !== scene.plate.num;

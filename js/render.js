@@ -141,7 +141,13 @@ export class Renderer {
 
     // The lifted chain sits over the dimmed case it came from.
     if (state === STATES.PIECE_DETAIL && this.chainRail) {
+      // Everything behind the piece falls out of focus. The case is already a
+      // single composited blit, so one filtered drawImage buys the whole effect.
+      const t = this.chainRail.focusT || 0;
+      const blur = this.crossfade ? 0 : 9 * t;
+      if (blur > 0.05) ctx.filter = `blur(${blur.toFixed(2)}px)`;
       this.chainRail.draw(ctx, now);
+      if (blur > 0.05) ctx.filter = 'none';
       this.chainRail.drawFocused(ctx, now);
     }
 

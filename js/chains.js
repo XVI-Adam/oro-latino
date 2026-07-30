@@ -75,6 +75,7 @@ class Chain {
     this.pendantType = spec.pendantType;   // cross/crucifix/medallion/tablet/null
     // a ~1.0 multiplier for the non-link furniture (pendant, tag, shadow)
     this.mmScale = spec.mmScale ?? 1;
+    this.tier = 'graphic';
     this.sizeK = (spec.scale ?? 1) * (0.62 + (spec.gauge ?? 4) * 0.055);
 
     const scale = spec.scale ?? 1;         // overall size (storefront rail is smaller)
@@ -412,7 +413,7 @@ class Chain {
     const P = this.particles;
     this._contactShadow(ctx);
     this._disc(ctx);
-    jewelry.strokeChain(ctx, P, this.style, this.gauge, this.mmScale, this.cull);
+    jewelry.strokeChain(ctx, P, this.style, this.gauge, this.mmScale, this.cull, this.tier || 'graphic');
     if (this.pendantType) {
       const p = P[this.pendant];
       const a = P[this.pendant - 1], b = P[this.pendant + 1];
@@ -445,14 +446,26 @@ class Chain {
 
     const ang = Math.atan2(b.y - a.y, b.x - a.x) - Math.PI / 2;
     const w = T.w, h = T.h;
+    // the solved position from _layoutTags, falling back to the raw pendulum
+    const tx = T.tx ?? b.x, ty = (T.ty ?? b.y) + h * 0.42;
+
+    // the string now reaches from the pendulum to wherever the tag was placed
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(tx, ty - h * 0.42);
+    ctx.strokeStyle = 'rgba(238,232,216,0.5)';
+    ctx.lineWidth = Math.max(1, 1.2 * this.sizeK);
+    ctx.stroke();
 
     ctx.save();
-    ctx.translate(b.x, b.y + h * 0.42);
-    ctx.rotate(ang);
+    ctx.translate(tx, ty);
+    ctx.rotate(ang * 0.35);          // hangs steadier than the raw pendulum
 
-    // cast shadow so the tag sits off the felt
+    // a real drop shadow so the tag always reads in front of the case
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(-w / 2 + 7, -h / 2 + 11, w, h);
     ctx.fillStyle = 'rgba(0,0,0,0.30)';
-    ctx.fillRect(-w / 2 + 3, -h / 2 + 5, w, h);
+    ctx.fillRect(-w / 2 + 4, -h / 2 + 6, w, h);
 
     // paper
     ctx.fillStyle = highlight ? '#FFFFFF' : '#F6F2E6';
@@ -590,10 +603,13 @@ export class ChainRail {
   constructor(stage, jewelry, onTap, opts = {}) {
     const {
       railY = 210, x0 = 150, x1 = DESIGN.W - 150, seed = 1337, scale = 1,
-      dropScale = 1, mmScale = 1, pieces = null, tags = false,
+      dropScale = 1, mmScale = 1, pieces = null, tags = false, visible = null,
       quality = 1, reducedMotion = false, coarsePointer = false,
     } = opts;
-    const count = pieces ? pieces.length : (opts.count ?? 22);
+    // Only `visible` pieces hang in frame; the rest stay in pieces.json for a
+    // future horizontally-draggable rail.
+    const shown = pieces ? pieces.slice(0, visible || pieces.length) : null;
+    const count = shown ? shown.length : (opts.count ?? 22);
     this.stage = stage;
     this.jewelry = jewelry;
     this.onTap = onTap || (() => {});
@@ -621,7 +637,7 @@ export class ChainRail {
     const pendants = [...PENDANT_TYPES, null, null];
     for (let i = 0; i < count; i++) {
       const x = x0 + (x1 - x0) * (i / (count - 1));
-      const piece = pieces ? pieces[i] : null;
+      const piece = shown ? shown[i] : null;
       // With inventory loaded, every visual property comes from the data.
       const spec = piece
         ? {
@@ -680,9 +696,21 @@ export class ChainRail {
     // reduced motion: land already lifted, so the change is a crossfade
     this.focusT = this.reducedMotion ? 1 : 0;
     this.activate(i);
+    // Detail LOD: this one piece re-renders from the full metallic atlas.
+    // Built lazily here, released on unfocus, so idle memory stays flat.
+    const c = this.chains[i];
+    if (c) c.tier = 'detail';
   }
 
-  unfocus() { this.focusIndex = -1; this.focusT = 0; }
+  unfocus() {
+    const c = this.chains[this.focusIndex];
+    if (c) c.tier = 'graphic';
+    this.focusIndex = -1;
+    this.focusT = 0;
+    this._needsComposite = true;
+    // drop the detail sprites; the case never needs them
+    this.jewelry.releaseTier('detail');
+  }
 
   // ── wake / sleep set management ─────────────────────────────────────────
   _neighbors(i) {
@@ -815,7 +843,7 @@ export class ChainRail {
 
     // ease the focused chain forward
     if (this.focusIndex >= 0 && this.focusT < 1) {
-      this.focusT = Math.min(1, this.focusT + dt * 2.6);
+      this.focusT = Math.min(1, this.focusT + dt * 1.67);   // ~600ms
     }
 
     // A chain swinging hard stirs the air around it: nearby tags flutter.
@@ -896,7 +924,7 @@ export class ChainRail {
   _spawnGlint(i, atLink = null) {
     const c = this.chains[i];
     if (!c) return;
-    const links = this.jewelry.linkPositions(c.particles, c.style, c.gauge, c.mmScale);
+    const links = this.jewelry.linkPositions(c.particles, c.style, c.gauge, c.mmScale, c.tier);
     if (!links.length) return;
     let idx = atLink;
     if (idx == null) {
@@ -922,7 +950,7 @@ export class ChainRail {
   _curvatureGlints(i, n = 2) {
     const c = this.chains[i];
     if (!c) return;
-    const links = this.jewelry.linkPositions(c.particles, c.style, c.gauge, c.mmScale);
+    const links = this.jewelry.linkPositions(c.particles, c.style, c.gauge, c.mmScale, c.tier);
     if (links.length < 4) return;
     // squeeze < 1 marks a bend; pick the tightest few
     const bends = links
@@ -1002,6 +1030,46 @@ export class ChainRail {
     this._needsComposite = false;
   }
 
+  /**
+   * Tag layout. Tags are pinned to a swinging chain, so they collide as the
+   * rail moves. Three staggered vertical bands give a base rhythm; then a few
+   * relaxation passes push overlapping tags apart horizontally and nudge any
+   * tag that has drifted in front of a neighbouring chain back toward its own.
+   * Re-solved every frame the rail is awake, so it survives a swing.
+   */
+  _layoutTags() {
+    const list = [];
+    for (const c of this.chains) {
+      if (!c.tag) continue;
+      const t = c.tag, p = t.parts[1];
+      // band offset keeps neighbours from lining up at the same height
+      t.band = c.index % 3;
+      t.tx = p.x;
+      t.ty = p.y + t.band * (t.h * 1.15);
+      list.push({ c, t });
+    }
+    // horizontal separation
+    for (let pass = 0; pass < 3; pass++) {
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = list[i].t, b = list[j].t;
+          if (Math.abs(a.ty - b.ty) > (a.h + b.h) * 0.55) continue;
+          const need = (a.w + b.w) * 0.52;
+          const dx = b.tx - a.tx;
+          const gap = Math.abs(dx) - need;
+          if (gap >= 0) continue;
+          const push = (-gap / 2) * (dx >= 0 ? 1 : -1);
+          a.tx -= push; b.tx += push;
+        }
+      }
+      // don't let a tag wander in front of a neighbouring chain
+      for (const { c, t } of list) {
+        const lane = this.spacing * 0.46;
+        t.tx = clamp(t.tx, c.discX - lane, c.discX + lane);
+      }
+    }
+  }
+
   /** Visible design-space rect (accounts for the portrait crop and zoom). */
   _updateCull() {
     const f = this.stage.frame || { x: 0, y: 0, w: DESIGN.W, h: DESIGN.H };
@@ -1033,6 +1101,9 @@ export class ChainRail {
     if (this._needsComposite) this._recomposite();
     ctx.drawImage(this.layer, 0, 0, DESIGN.W, DESIGN.H); // sleeping chains (static)
     perf.end('composite');
+    perf.begin('tagDraw');
+    this._layoutTags();
+    perf.end('tagDraw');
     perf.begin('chainDraw');
     for (const i of this.active) {
       if (i === this.focusIndex) continue;              // drawn lifted, on top
@@ -1079,8 +1150,9 @@ export class ChainRail {
     ctx.fillRect(0, 0, DESIGN.W, DESIGN.H);
 
     const cx = c.discX, cy = this.railY;
-    const tx = DESIGN.W * 0.32, ty = this.railY - 30;
-    const s = 1 + 0.42 * t;
+    const tx = DESIGN.W * 0.34, ty = this.railY - 20;
+    // 2.7x: the piece should feel picked up and brought to the eye
+    const s = 1 + 1.7 * t;
 
     ctx.save();
     ctx.translate(cx + (tx - cx) * t, cy + (ty - cy) * t);
@@ -1092,7 +1164,7 @@ export class ChainRail {
 
   _rail(ctx) {
     const y = this.railY;
-    const rx = this.x0 - 70, rw = (this.x1 - this.x0) + 140;
+    const rx = this.x0 - 34, rw = (this.x1 - this.x0) + 68;
     const g = ctx.createLinearGradient(0, y - 30, 0, y - 6);
     g.addColorStop(0, '#3a3f49');
     g.addColorStop(1, '#14171d');
