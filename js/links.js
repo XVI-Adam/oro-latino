@@ -580,13 +580,27 @@ export function linkWidthPx(style, mm) {
 }
 
 /** Tier descriptor: which tables to use and what the sprites were authored at. */
-export function tierSpec(tier) {
-  // A run strip bakes into a square cell big enough to rotate in, so its memory
-  // grows with the SQUARE of strip length. Smaller graphic links (this pass)
-  // mean smaller cells, which buys back room for longer strips: 6 links.
-  return tier === 'detail'
-    ? { variants: VARIANTS, styles: STYLES, baseGauge: BASE_MM * PX_PER_MM,
-        ss: 2, runLinks: 8 }
-    : { variants: GFX_VARIANTS, styles: GFX_STYLES, baseGauge: BASE_GFX_PX,
-        ss: 1.6, runLinks: 6 };
+const GFX_SPEC = { variants: GFX_VARIANTS, styles: GFX_STYLES,
+                   baseGauge: BASE_GFX_PX, ss: 1.6, runLinks: 6, name: 'graphic' };
+const DETAIL_SPEC = { variants: VARIANTS, styles: STYLES,
+                      baseGauge: BASE_MM * PX_PER_MM, ss: 2, runLinks: 8, name: 'detail' };
+
+/**
+ * Tier descriptor. Resolution is PER STYLE, not per tier: the detail tier only
+ * carries metallic art for the four original styles, so a style it doesn't have
+ * (cable, diamond) resolves to the graphic tables instead of to `undefined`.
+ *
+ * This was a real freeze: `_run()` read `spec.styles[style]` with no fallback,
+ * so opening the cable-chain crucifix threw inside rAF on every frame and the
+ * app looked hung. Making the fallback structural means adding a new style can
+ * never reintroduce it.
+ *
+ * A run strip bakes into a square cell big enough to rotate in, so its memory
+ * grows with the SQUARE of strip length; the graphic tier's smaller links buy
+ * room for 6-link strips.
+ */
+export function tierSpec(tier, style) {
+  if (tier !== 'detail') return GFX_SPEC;
+  if (style && !STYLES[style]) return GFX_SPEC;   // no metallic art for it
+  return DETAIL_SPEC;
 }

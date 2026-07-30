@@ -126,8 +126,14 @@ export class Jewelry {
 
     const out = [];
     let idx = 0;
-    const mmPx = gaugePx * stretch;            // already px; pitch-capped
-    let need = layout.seq(0).pitch * mmPx * 0.5;
+    // The walk below advances by `need`; if that ever reached 0 or NaN the loop
+    // would spin forever. Floor it so non-termination is structurally impossible.
+    const MIN_ADVANCE = 0.25;
+    const safePitch = (i) => {
+      const v = layout.seq(i).pitch * gaugePx * (Number.isFinite(stretch) ? stretch : 1);
+      return Number.isFinite(v) && v > MIN_ADVANCE ? v : MIN_ADVANCE;
+    };
+    let need = safePitch(0) * 0.5;
     for (let s = 0; s < n - 1; s++) {
       const ax = P[s].x, ay = P[s].y;
       const dx = P[s + 1].x - ax, dy = P[s + 1].y - ay;
@@ -158,7 +164,7 @@ export class Jewelry {
           squeeze,
         });
         idx++;
-        need = layout.seq(idx).pitch * mmPx * squeeze;
+        need = Math.max(MIN_ADVANCE, safePitch(idx) * squeeze);
       }
       need -= (len - pos);
     }
@@ -179,8 +185,10 @@ export class Jewelry {
   _run(style, spec, tierName, count = 8) {
     const key = `${tierName}:${style}x${count}`;
     let r = this.runs.get(key);
+    if (r === null) return null;
     if (!r) {
       const layout = spec.styles[style];
+      if (!layout) return null;
       // The strip is built with the same three-pass interlock the single-link
       // path used — but ONCE, at bake time, so the clip never costs a frame.
       const build = (c, x0, ss) => {
@@ -239,9 +247,12 @@ export class Jewelry {
    */
   strokeChain(ctx, P, style, mm = 4, depth = 1, cull = null, tier = 'graphic') {
     this._checkDpr();
-    const spec = tierSpec(tier);
-    const layout = spec.styles[style] || spec.styles.cuban || spec.styles.rope;
-    const g = (tier === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm)) * depth;
+    const spec = tierSpec(tier, style);
+    const tierName = spec.name;          // the RESOLVED tier, so keys can't collide
+    const layout = spec.styles[style];
+    if (!layout) return;                 // unknown style: draw nothing, never throw
+    const g = (spec === undefined ? 0 : (tierName === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm))) * depth;
+    if (!(g > 0) || !Number.isFinite(g)) return;
     const links = this._layout(P, layout, g);
     if (!links.length) return;
 
@@ -249,10 +260,10 @@ export class Jewelry {
     this._core(ctx, P, g * 0.30, 'rgba(46,30,4,0.92)');
 
     const longLen = spec.runLinks;
-    const runLong = this._run(style, spec, tier, longLen);
+    const runLong = this._run(style, spec, tierName, longLen);
     const period = layout.period || 2;
     const shortLen = (period <= 4 && longLen >= 8) ? longLen / 2 : 0;
-    const runShort = shortLen ? this._run(style, spec, tier, shortLen) : null;
+    const runShort = shortLen ? this._run(style, spec, tierName, shortLen) : null;
     // RunAtlas.stamp wants a RATIO against the size the strip was authored at,
     // not an absolute gauge.
     const scale = (g / spec.baseGauge) * (this.runQuality || 1);
@@ -284,7 +295,7 @@ export class Jewelry {
       }
       const L = links[i];
       if (!cull || (L.x > cull.x0 && L.x < cull.x1 && L.y > cull.y0 && L.y < cull.y1)) {
-        this._link(L.v, spec, tier).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+        this._link(L.v, spec, tierName).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
         perf.links++;
       }
       i++;
@@ -293,9 +304,10 @@ export class Jewelry {
 
   /** How many links a chain resolves to at a given tier — for the HUD. */
   linkCount(P, style, mm, depth = 1, tier = 'graphic') {
-    const spec = tierSpec(tier);
+    const spec = tierSpec(tier, style);
     const g = (tier === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm)) * depth;
-    return this._layout(P, spec.styles[style] || spec.styles.rope, g).length;
+    const lay = spec.styles[style];
+    return lay ? this._layout(P, lay, g).length : 0;
   }
 
   /** Release every sprite built for a tier (detail LOD unloads on exit). */
@@ -326,16 +338,17 @@ export class Jewelry {
       const facing = 0.55 + 0.45 * Math.cos(L.a - LIGHT_ANGLE);
       const fall = 1 - d / (span + 1);
       ctx.globalAlpha = Math.max(0, fall * fall * facing * 0.5 * strength);
-      this._link(L.v, spec, tier).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
+      this._link(L.v, spec, spec.name).stamp(ctx, L.x, L.y, L.a, g, L.squeeze);
     }
     ctx.restore();
   }
 
   /** Where along the chain the links are — used to place sparkles. */
   linkPositions(P, style, mm = 4, depth = 1, tier = 'graphic') {
-    const spec = tierSpec(tier);
+    const spec = tierSpec(tier, style);
     const g = (tier === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm)) * depth;
-    return this._layout(P, spec.styles[style] || spec.styles.rope, g);
+    const lay = spec.styles[style];
+    return lay ? this._layout(P, lay, g) : [];
   }
 
   /**

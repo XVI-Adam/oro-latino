@@ -75,8 +75,13 @@ chainTuner.hide();
 
 // The storefront window: a second, smaller chain rail (same sim) plus the
 // layered scene — sign, trays, bangles, glass, and the draggable entry door.
+// graphicGauge is tuned for the chain-case CLOSE-UP. The storefront is a wide
+// establishing shot, so its rail gets its own scene scale: `mmScale` shrinks the
+// drawn link (and with it the pendant, which is sized off link width), and
+// `dropScale` shortens the hang so no chain overhangs its tray or nears the sign.
 const windowChains = new ChainRail(stage, jewelry, () => {}, {
-  railY: 265, x0: 320, x1: 1330, count: 13, seed: 4242, scale: 0.7, mmScale: 0.5,
+  railY: 265, x0: 320, x1: 1330, count: 13, seed: 4242,
+  scale: 0.7, mmScale: 0.30, dropScale: 0.62,
   quality: QUALITY, reducedMotion, coarsePointer: COARSE,
 });
 const storefront = new Storefront({ ...GATE_RECT }, windowChains, jewelry,
