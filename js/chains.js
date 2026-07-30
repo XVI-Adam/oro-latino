@@ -19,7 +19,7 @@
 
 import { DESIGN, PALETTE } from './config.js';
 import { CHAIN_STYLES, PENDANT_TYPES } from './jewelry.js';
-import { LIGHT_ANGLE } from './links.js';
+import { LIGHT_ANGLE, linkWidthPx } from './links.js';
 import { perf } from './perf.js';
 
 // ── tuning (defaults; damping/settleSpring/sleepThreshold/laneWidth are live) ─
@@ -27,7 +27,7 @@ const FIXED = 1 / 60;      // fixed physics timestep (s)
 const MAX_STEPS = 2;       // catch-up cap — a slow frame must not buy itself
                            // more work and spiral (this was 5, and it did)
 const GRAVITY = 2100;      // px/s²
-const ITER = 6;            // constraint relaxation iterations
+const ITER = 4;            // fewer iterations = a softer, less rigid rope
 const AIR = 0.045;         // quadratic air-drag coefficient (big swings bleed fast)
 const KE_LIVELY = 2.5;     // kinetic energy above which settle assist ≈ 0
 const LANE_K = 24;         // lane restoring stiffness (px/s² per px of overshoot)
@@ -41,10 +41,10 @@ const CURSOR_SWIPE = 9;    // how strongly cursor motion drags nearby particles
 
 const DEFAULT_PARAMS = {
   damping: 0.981,          // velocity retained per step (tuned for the long case chains)
-  settleSpring: 34,        // settle-assist stiffness at zero energy (px/s² per px)
+  settleSpring: 17,        // halved: the rope should ripple, not snap back
   sleepThreshold: 0.18,    // avg per-particle energy below which a chain is calm
                            // (~27 px/s drift — the 300ms eased blend hides it)
-  laneWidth: 90,           // ± lane half-width around the disc (px)
+  laneWidth: 170,          // widened so a swing can actually travel
   cursorForce: 2100,       // hover repulsion strength at the cursor (px/s²)
   cursorRadius: 160,       // hover influence radius (px)
 };
@@ -76,19 +76,23 @@ class Chain {
     // a ~1.0 multiplier for the non-link furniture (pendant, tag, shadow)
     this.mmScale = spec.mmScale ?? 1;
     this.tier = 'graphic';
+    this.linkW = 20;   // drawn link width in px; set from the style + gauge
     this.sizeK = (spec.scale ?? 1) * (0.62 + (spec.gauge ?? 4) * 0.055);
 
     const scale = spec.scale ?? 1;         // overall size (storefront rail is smaller)
     const dropScale = spec.dropScale ?? 1; // lengthens the hang without fattening links
     // Particle count scales with the device budget: fewer, longer segments on
     // phones keeps the same silhouette and drape for a fraction of the work.
+    // Simulation resolution is now independent of how many links get drawn:
+    // a rope needs many particles to ripple, however few links it renders.
+    // 80–120 particles per chain, scaled only by the device budget.
     const quality = spec.quality ?? 1;
-    const baseN = 16 + Math.floor(rng() * 7);
-    const N = Math.max(9, Math.round(baseN * (0.55 + 0.45 * quality)));
-    // Longer segments compensate for fewer particles, so the drop is identical
-    // at every quality level — only the simulation cost changes.
-    const lenComp = (baseN - 1) / (N - 1);
-    this.restLen = (26 + rng() * 12) * scale * dropScale * lenComp;
+    const baseN = 84 + Math.floor(rng() * 36);
+    const N = Math.max(48, Math.round(baseN * (0.55 + 0.45 * quality)));
+    // total path length of the loop (both strands), tuned so the lowest point
+    // lands around y=880 with the rail at 128
+    const targetLen = (620 + rng() * 260) * scale * dropScale;
+    this.restLen = targetLen / (N - 1);
     const sep = (20 + rng() * 8) * scale;  // gap between the two top pins
     this.sep = sep;
     this.pinL = { x: discX - sep / 2, y: discY };
@@ -96,7 +100,7 @@ class Chain {
 
     // pendant particle: the lowest point of the drape; a real pendant weighs more
     this.pendant = Math.floor(N / 2);
-    const pendantMass = spec.pendantType ? 4 + rng() * 3 : 1.6;
+    const pendantMass = spec.pendantType ? 9 + rng() * 6 : 3;
 
     this.particles = [];
     const drop = this.restLen * (N - 1) / 2 * 0.96;
@@ -126,6 +130,7 @@ class Chain {
     this.piece = spec.piece || null;
     if (spec.tag !== false) this._buildTag(scale, rng);
 
+    this.linkW = linkWidthPx(this.style, this.gauge) * this.mmScale;
     this._bakeRestPose();
   }
 
@@ -419,8 +424,9 @@ class Chain {
       const a = P[this.pendant - 1], b = P[this.pendant + 1];
       const ang = Math.atan2(p.y - (a.y + b.y) / 2, p.x - (a.x + b.x) / 2);
       // tight AO where the pendant rests against the velvet backing
-      jewelry.ao(ctx, p.x, p.y + 16 * this.sizeK, 20 * this.sizeK, 8 * this.sizeK, 0.5);
-      jewelry.stampPendant(ctx, this.pendantType, p.x, p.y, ang, this.sizeK);
+      const linkW = this.linkW || 20;
+      jewelry.ao(ctx, p.x, p.y + linkW * 0.9, linkW * 1.3, linkW * 0.5, 0.5);
+      this.pendantSize = jewelry.stampPendant(ctx, this.pendantType, p.x, p.y, ang, linkW);
     }
     perf.begin('tagDraw');
     this._drawTag(ctx);
@@ -843,7 +849,7 @@ export class ChainRail {
 
     // ease the focused chain forward
     if (this.focusIndex >= 0 && this.focusT < 1) {
-      this.focusT = Math.min(1, this.focusT + dt * 1.67);   // ~600ms
+      this.focusT = Math.min(1, this.focusT + dt * 1.43);   // ~700ms morph
     }
 
     // A chain swinging hard stirs the air around it: nearby tags flutter.
@@ -899,6 +905,304 @@ export class ChainRail {
       }
     }
     for (const i of done) { this.active.delete(i); this._needsComposite = true; }
+  }
+
+  /** Schedule and advance the specular glints. */
+  _stepGlints(dt) {
+    for (let i = this.glints.length - 1; i >= 0; i--) {
+      const g = this.glints[i];
+      g.t += dt / g.dur;
+      if (g.t >= 1) this.glints.splice(i, 1);
+    }
+    // Every visible chain gets its own 4–9s timer.
+    for (const c of this.chains) {
+      c.glintIn = (c.glintIn ?? (4 + Math.random() * 5)) - dt;
+      if (c.glintIn > 0) continue;
+      c.glintIn = (4 + Math.random() * 5) / Math.max(0.05, this.glintRate);
+      if (this.glints.length < 5 && Math.random() < this.glintRate) this._spawnGlint(c.index);
+    }
+  }
+
+  /**
+   * @param {number} i        chain index
+   * @param {number} [atLink] force a link index (used for curvature spawns)
+   */
+  _spawnGlint(i, atLink = null) {
+    const c = this.chains[i];
+    if (!c) return;
+    const links = this.jewelry.linkPositions(c.particles, c.style, c.gauge, c.mmScale, c.tier);
+    if (!links.length) return;
+    let idx = atLink;
+    if (idx == null) {
+      // bias toward links whose face turns to the light
+      let best = 0, bestScore = -1;
+      for (let k = 0; k < 6; k++) {
+        const cand = (Math.random() * links.length) | 0;
+        const score = Math.cos(links[cand].a - LIGHT_ANGLE) + Math.random() * 0.5;
+        if (score > bestScore) { bestScore = score; best = cand; }
+      }
+      idx = best;
+    }
+    const L = links[Math.min(idx, links.length - 1)];
+    this.glints.push({
+      i, link: L.i, x: L.x, y: L.y,
+      t: 0, dur: 0.5 + Math.random() * 0.35,
+      span: 1 + ((Math.random() * 2) | 0),      // 3–4 links across
+      r: 7 + Math.random() * 6,
+    });
+  }
+
+  /** A swinging or grabbed chain throws extra sparks off its tightest bends. */
+  _curvatureGlints(i, n = 2) {
+    const c = this.chains[i];
+    if (!c) return;
+    const links = this.jewelry.linkPositions(c.particles, c.style, c.gauge, c.mmScale, c.tier);
+    if (links.length < 4) return;
+    // squeeze < 1 marks a bend; pick the tightest few
+    const bends = links
+      .map((L, k) => ({ k, s: L.squeeze }))
+      .sort((a, b) => a.s - b.s)
+      .slice(0, 6);
+    for (let j = 0; j < Math.min(n, bends.length); j++) {
+      const pick = bends[(Math.random() * bends.length) | 0];
+      this._spawnGlint(i, pick.k);
+    }
+  }
+
+  /**
+   * Glints live on top of the composited background. A glint never wakes a
+   * chain, never re-stamps its links and never re-bakes the composite — it is
+   * a cached sprite at a point precomputed when it spawned.
+   */
+  _drawGlints(ctx) {
+    if (!this.glints.length) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const g of this.glints) {
+      const strength = Math.sin(Math.PI * g.t);
+      this.jewelry.sparkle(ctx, g.x, g.y, g.r * (0.6 + 0.4 * strength), strength * 0.9);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Sustained-load ladder. Never touches interlocking or the specular hotspot —
+   * those carry the realism; everything else is negotiable.
+   *   1 glint rate → 2 constraint iterations → 3 atlas tier → 4 sim only what's touched
+   */
+  _degrade(frameMs) {
+    const slow = frameMs > 20;
+    if (slow) this._slowFrames = (this._slowFrames || 0) + 1;
+    else this._slowFrames = Math.max(0, (this._slowFrames || 0) - 2);
+    const lvl = this._slowFrames > 90 ? 4 : this._slowFrames > 60 ? 3
+              : this._slowFrames > 30 ? 2 : this._slowFrames > 12 ? 1 : 0;
+    if (lvl === this.degradeLevel) return;
+    this.degradeLevel = lvl;
+    this.glintRate = lvl >= 1 ? 0.25 : 1;
+    this.iterations = lvl >= 2 ? 4 : (this.quality < 0.7 ? 4 : ITER);
+    this.jewelry.runQuality = lvl >= 3 ? 0.85 : 1;
+    this.simTouchedOnly = lvl >= 4;
+    if (lvl > 0) console.info(`[perf] degrade level ${lvl} (${this._slowFrames} slow frames)`);
+  }
+
+  /** Chains currently in motion (awake or settling). */
+  simCount() {
+    let n = 0;
+    for (const i of this.active) if (this.chains[i].sleepState !== 'asleep') n++;
+    return n;
+  }
+
+  // ── rendering ─────────────────────────────────────────────────────────────
+  _ensureLayer() {
+    const dpr = this.stage.dpr;
+    const w = Math.round(DESIGN.W * dpr);
+    const h = Math.round(DESIGN.H * dpr);
+    if (this.layer.width !== w || this.layer.height !== h || this._layerDpr !== dpr) {
+      this.layer.width = w;
+      this.layer.height = h;
+      this._layerDpr = dpr;
+      this._needsComposite = true;
+    }
+  }
+
+  _recomposite() {
+    const ctx = this.lctx;
+    ctx.setTransform(this._layerDpr, 0, 0, this._layerDpr, 0, 0);
+    ctx.clearRect(0, 0, DESIGN.W, DESIGN.H);
+    this._rail(ctx);
+    for (const c of this.chains) {
+      if (!this.active.has(c.index)) c.draw(ctx, this.jewelry); // asleep chains only
+    }
+    this._needsComposite = false;
+  }
+
+  /**
+   * Tag layout. Tags are pinned to a swinging chain, so they collide as the
+   * rail moves. Three staggered vertical bands give a base rhythm; then a few
+   * relaxation passes push overlapping tags apart horizontally and nudge any
+   * tag that has drifted in front of a neighbouring chain back toward its own.
+   * Re-solved every frame the rail is awake, so it survives a swing.
+   */
+  _layoutTags() {
+    const list = [];
+    for (const c of this.chains) {
+      if (!c.tag) continue;
+      const t = c.tag, p = t.parts[1];
+      // band offset keeps neighbours from lining up at the same height
+      t.band = c.index % 3;
+      t.tx = p.x;
+      t.ty = p.y + t.band * (t.h * 1.15);
+      list.push({ c, t });
+    }
+    // horizontal separation
+    for (let pass = 0; pass < 3; pass++) {
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = list[i].t, b = list[j].t;
+          if (Math.abs(a.ty - b.ty) > (a.h + b.h) * 0.55) continue;
+          const need = (a.w + b.w) * 0.52;
+          const dx = b.tx - a.tx;
+          const gap = Math.abs(dx) - need;
+          if (gap >= 0) continue;
+          const push = (-gap / 2) * (dx >= 0 ? 1 : -1);
+          a.tx -= push; b.tx += push;
+        }
+      }
+      // don't let a tag wander in front of a neighbouring chain
+      for (const { c, t } of list) {
+        const lane = this.spacing * 0.46;
+        t.tx = clamp(t.tx, c.discX - lane, c.discX + lane);
+      }
+    }
+  }
+
+  /** Visible design-space rect (accounts for the portrait crop and zoom). */
+  _updateCull() {
+    const f = this.stage.frame || { x: 0, y: 0, w: DESIGN.W, h: DESIGN.H };
+    const pad = 90;
+    const r = { x0: f.x - pad, y0: f.y - pad, x1: f.x + f.w + pad, y1: f.y + f.h + pad };
+    this.cull = r;
+    for (const c of this.chains) c.cull = r;
+  }
+
+  draw(ctx, now) {
+    this._ensureLayer();
+    this._updateCull();
+
+    if (this.debug) {
+      this._rail(ctx);
+      for (const c of this.chains) { c.draw(ctx, this.jewelry); c.drawDebug(ctx, this.params.laneWidth); }
+      if (this.cursor.active) {
+        ctx.strokeStyle = 'rgba(255,214,10,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(this.cursor.x, this.cursor.y, this.params.cursorRadius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      this._hud(ctx);
+      return;
+    }
+
+    perf.begin('composite');
+    if (this._needsComposite) this._recomposite();
+    ctx.drawImage(this.layer, 0, 0, DESIGN.W, DESIGN.H); // sleeping chains (static)
+    perf.end('composite');
+    perf.begin('tagDraw');
+    this._layoutTags();
+    perf.end('tagDraw');
+    perf.begin('chainDraw');
+    for (const i of this.active) {
+      if (i === this.focusIndex) continue;              // drawn lifted, on top
+      this.chains[i].draw(ctx, this.jewelry);
+    }
+    perf.awake = this.active.size;
+    perf.end('chainDraw');
+    perf.begin('glints');
+    this._drawGlints(ctx);
+    perf.end('glints');
+    if (this.hoverTag >= 0 && this.hoverTag !== this.focusIndex) {
+      this.chains[this.hoverTag]._drawTag(ctx, true);   // highlight under cursor
+    }
+    if (this.keyFocus >= 0) this._focusRing(ctx, this.chains[this.keyFocus], now);
+  }
+
+  /** Visible focus indicator for the keyboard-selected chain. */
+  _focusRing(ctx, c, now) {
+    if (!c) return;
+    let top = Infinity, bot = -Infinity;
+    for (const p of c.particles) { top = Math.min(top, p.y); bot = Math.max(bot, p.y); }
+    if (c.tag) bot = Math.max(bot, c.tag.parts[1].y + c.tag.h);
+    const halfW = Math.max(70, this.spacing * 0.46);
+    const a = 0.65 + 0.2 * Math.sin(now * 0.005);
+    ctx.save();
+    ctx.strokeStyle = `rgba(232,200,106,${a})`;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([9, 7]);
+    ctx.strokeRect(c.discX - halfW, top - 34, halfW * 2, (bot - top) + 60);
+    ctx.restore();
+  }
+
+  /**
+   * PIECE_DETAIL: dim the case and bring the selected chain forward, centered
+   * to the left so the DOM card can sit beside it. The chain keeps simulating,
+   * so it still sways while you read.
+   */
+  /**
+   * PIECE_DETAIL. Rather than a fixed zoom factor, the piece is FIT to a target
+   * box: measure its full bounds (every link plus the pendant), then solve the
+   * scale and offset that place it inside the left portion of the frame with a
+   * comfortable margin. Nothing can be cropped at any viewport, because the
+   * transform is derived from the piece's own measured extent.
+   */
+  _fitFocus() {
+    const c = this.chains[this.focusIndex];
+    if (!c) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of c.particles) {
+      if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x;
+      if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+    }
+    // the pendant hangs below the lowest particle and is the widest element
+    if (c.pendantType) {
+      const pw = (c.pendantSize?.w) || c.linkW * 5;
+      const ph = (c.pendantSize?.h) || pw * 1.35;
+      y1 += ph;
+      const px = c.particles[c.pendant].x;
+      x0 = Math.min(x0, px - pw / 2);
+      x1 = Math.max(x1, px + pw / 2);
+    }
+    // the disc holder sits a little above the top pin
+    y0 -= 34;
+
+    // target box: left portion of the frame, card lives on the right
+    const box = { x: DESIGN.W * 0.045, y: DESIGN.H * 0.07,
+                  w: DESIGN.W * 0.50, h: DESIGN.H * 0.86 };
+    const w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
+    const s = Math.min(box.w / w, box.h / h);
+    return {
+      s,
+      tx: box.x + box.w / 2 - ((x0 + x1) / 2) * s,
+      ty: box.y + box.h / 2 - ((y0 + y1) / 2) * s,
+    };
+  }
+
+  drawFocused(ctx, now) {
+    const c = this.chains[this.focusIndex];
+    if (!c) return;
+    const t = easeInOutCubic(this.focusT);
+    const fit = this._fitFocus();
+    if (!fit) return;
+
+    // morph from "hanging where it was" to "fitted presentation pose"
+    const s = 1 + (fit.s - 1) * t;
+    const tx = fit.tx * t;
+    const ty = fit.ty * t;
+
+    ctx.save();
+    ctx.translate(tx, ty);
+    ctx.scale(s, s);
+    c.draw(ctx, this.jewelry);
+    ctx.restore();
   }
 
   /** Schedule and advance the specular glints. */

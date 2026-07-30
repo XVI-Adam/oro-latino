@@ -53,7 +53,7 @@ for (const p of inventory.pieces) p.renderGauge = renderGauge(p);
 const chainRail = new ChainRail(stage, jewelry, (i) => openPiece(i), {
   // 9 pieces at the new graphic scale, rail near the top edge, long hangs so
   // chains and pendants own the lower two-thirds.
-  railY: 128, x0: 296, x1: DESIGN.W - 296, seed: 1337, scale: 1.35, dropScale: 1.62,
+  railY: 128, x0: 296, x1: DESIGN.W - 296, seed: 1337, scale: 1.35, dropScale: 0.88,
   pieces: inventory.pieces, visible: 9, tags: true,
   quality: QUALITY, reducedMotion, coarsePointer: COARSE,
 });
@@ -143,7 +143,7 @@ machine.onChange((state) => {
   overlay.setHotspotHover(null);
   canvas.style.cursor = 'default';
   if (state !== STATES.CASE_FOCUS) chainRail.clearCursor();
-  if (state !== STATES.PIECE_DETAIL) { pieceCard.hide(); chainRail.unfocus(); }
+  if (state !== STATES.PIECE_DETAIL) { pieceCard.hide(); chainRail.unfocus(); renderer.clearDetailBg(); }
   if (state !== STATES.STOREFRONT) windowChains.clearCursor();
   if (state === STATES.STOREFRONT) storefront.reset();
   if (state === STATES.INTERIOR) interior.flicker();   // the tube strikes as you walk in

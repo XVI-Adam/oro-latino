@@ -6,7 +6,8 @@
 //   perf.countDrawImage(ctx)                          → wraps drawImage once
 //   perf.frame()                                      → call once per rAF
 
-const SUBSYSTEMS = ['physics', 'chainDraw', 'tagDraw', 'composite', 'glints'];
+const SUBSYSTEMS = ['physics', 'chainDraw', 'tagDraw', 'composite', 'glints',
+                    'backdrop', 'detail', 'other'];
 
 export class Perf {
   constructor() {
@@ -91,6 +92,12 @@ export class Perf {
       tagDraw: +this.ms.tagDraw.toFixed(2),
       composite: +this.ms.composite.toFixed(2),
       glints: +this.ms.glints.toFixed(2),
+      backdrop: +this.ms.backdrop.toFixed(2),
+      detail: +this.ms.detail.toFixed(2),
+      // Anything the instrumented blocks didn't claim. If this isn't near zero,
+      // something outside the measured sections is eating the frame.
+      unaccounted: +Math.max(0, this.frameMs - SUBSYSTEMS.reduce(
+        (a, k) => a + this.ms[k], 0)).toFixed(2),
       drawImage: this._frameDrawImages || 0,
       drawImageAvg: Math.round(this.drawImagesAvg),
       awake: this.awake,
@@ -129,6 +136,9 @@ export function buildPerfHUD(getSurfaces) {
         row('tags', s.tagDraw) +
         row('composite', s.composite) +
         row('glints', s.glints, s.glints > 2) +
+        row('backdrop', s.backdrop, s.backdrop > 2) +
+        row('detail', s.detail) +
+        row('unaccounted', s.unaccounted, s.unaccounted > 3) +
         row('drawImage', s.drawImage, s.drawImage > 900) +
         row('awake', s.awake) +
         row('atlas MB', `${s.atlasMB} / ${perf.budgetMB}`, s.atlasMB > perf.budgetMB);

@@ -13,7 +13,8 @@
 
 import { LinkAtlas, RunAtlas, STYLES, VARIANTS, visualMM, PX_PER_MM, LIGHT_ANGLE,
          BASE_MM, RUN_LINKS, MAX_LINKS_PER_CHAIN, supersampleFor,
-         graphicGauge, tierSpec } from './links.js';
+         graphicGauge, tierSpec, linkWidthPx, MIN_PATTERN_REPEATS,
+         GFX_STYLES } from './links.js';
 import { perf } from './perf.js';
 
 const BASE_MM_PX = 8 * PX_PER_MM;
@@ -101,13 +102,18 @@ export class Jewelry {
   _layout(P, layout, gaugePx) {
     const n = P.length;
     if (n < 2) return [];
-    // Cap the link count: a 2.5mm rope over a 1100px path would otherwise want
-    // ~1000 links. Stretch the pitch instead — at this gauge nobody can count.
+    // Link count is an OUTPUT (path ÷ pitch), never a target. The only thing
+    // governed here is the pattern-repeat floor: one full unit of a style's
+    // rhythm must appear at least MIN_PATTERN_REPEATS times over the hang, or a
+    // figaro's 3+1 reads as an accident. If a chain is too short for that, the
+    // pitch tightens until it isn't.
     let pathLen = 0;
     for (let i = 0; i < n - 1; i++) pathLen += Math.hypot(P[i+1].x - P[i].x, P[i+1].y - P[i].y);
-    const nominalPitch = layout.seq(0).pitch * gaugePx;
-    const wanted = pathLen / Math.max(nominalPitch, 0.01);
-    const stretch = wanted > MAX_LINKS_PER_CHAIN ? wanted / MAX_LINKS_PER_CHAIN : 1;
+    const pat = layout.pattern || layout.period || 2;
+    let unitPx = 0;
+    for (let k = 0; k < pat; k++) unitPx += layout.seq(k).pitch * gaugePx;
+    const repeats = pathLen / Math.max(unitPx, 0.01);
+    const stretch = repeats < MIN_PATTERN_REPEATS ? repeats / MIN_PATTERN_REPEATS : 1;
 
     // per-segment direction and length
     const segA = new Array(n - 1), segL = new Array(n - 1);
@@ -234,7 +240,7 @@ export class Jewelry {
   strokeChain(ctx, P, style, mm = 4, depth = 1, cull = null, tier = 'graphic') {
     this._checkDpr();
     const spec = tierSpec(tier);
-    const layout = spec.styles[style] || spec.styles.rope;
+    const layout = spec.styles[style] || spec.styles.cuban || spec.styles.rope;
     const g = (tier === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm)) * depth;
     const links = this._layout(P, layout, g);
     if (!links.length) return;
@@ -306,7 +312,7 @@ export class Jewelry {
   glintChain(ctx, P, style, mm = 4, centre = 0, span = 2, strength = 1, depth = 1, tier = 'graphic') {
     this._checkDpr();
     const spec = tierSpec(tier);
-    const layout = spec.styles[style] || spec.styles.rope;
+    const layout = spec.styles[style] || spec.styles.cuban || spec.styles.rope;
     const g = (tier === 'detail' ? visualMM(mm) * PX_PER_MM : graphicGauge(mm)) * depth;
     const links = this._layout(P, layout, g);
     if (!links.length) return;
@@ -409,16 +415,32 @@ export class Jewelry {
     return sp;
   }
 
-  /** Hang a pendant from (x,y), tilted to `angle` (radians, its +y axis). */
-  stampPendant(ctx, type, x, y, angle, gauge = 1) {
+  // A pendant must always be the heaviest, largest thing on its chain. These
+  // are multiples of the chain's DRAWN LINK WIDTH, so as links shrink the
+  // pendant grows in absolute pixels to hold the ratio.
+  static PENDANT_RATIO = {
+    cross: 5.0, crucifix: 5.4,      // 4–6x link width
+    medallion: 6.0,                 // 5–7x
+    tablet: 4.5,                    // 4–5x
+  };
+
+  /**
+   * Hang a pendant from (x,y). `linkW` is the chain's drawn link width in px;
+   * the pendant is sized from that, not from an arbitrary scale factor.
+   */
+  stampPendant(ctx, type, x, y, angle, linkW = 20) {
     this._checkDpr();
     const sp = this._pendantSprite(type);
+    const ratio = Jewelry.PENDANT_RATIO[type] || 5;
+    const targetW = linkW * ratio;
+    const k = targetW / sp.w;                 // uniform, so the art keeps shape
+    const w = sp.w * k, h = sp.h * k;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle - Math.PI / 2);
-    const w = sp.w * gauge, h = sp.h * gauge;
-    ctx.drawImage(sp.canvas, -w / 2, -3 * gauge, w, h);
+    ctx.drawImage(sp.canvas, -w / 2, -h * 0.06, w, h);
     ctx.restore();
+    return { w, h };                          // measurable, for verification
   }
 
   /**
@@ -575,4 +597,6 @@ const PENDANTS = {
 };
 
 export const PENDANT_TYPES = Object.keys(PENDANTS);
-export const CHAIN_STYLES = Object.keys(STYLES);
+// The graphic tier is the authority on what styles exist — it has the full
+// six-silhouette set; the detail tier only re-renders whatever the case shows.
+export const CHAIN_STYLES = Object.keys(GFX_STYLES);

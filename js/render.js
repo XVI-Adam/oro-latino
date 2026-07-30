@@ -73,6 +73,24 @@ export class Renderer {
     this._raf = requestAnimationFrame(this._loop);
   }
 
+  /** Bake the blurred case behind the piece view. Rebuilt only on entry. */
+  _ensureDetailBg(ctx, now, dpr) {
+    if (this._detailBg && this._detailBgKey === this.chainRail.focusIndex) return;
+    const c = document.createElement('canvas');
+    c.width = Math.round(DESIGN.W * dpr);
+    c.height = Math.round(DESIGN.H * dpr);
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this._backdrop(g, 'felt');
+    if (!this.crossfade) g.filter = 'blur(9px)';
+    this.chainRail.draw(g, now);
+    g.filter = 'none';
+    this._detailBg = c;
+    this._detailBgKey = this.chainRail.focusIndex;
+  }
+
+  clearDetailBg() { this._detailBg = null; this._detailBgKey = -1; }
+
   _isGateState() {
     return this.machine.state === STATES.GATE_CLOSED || this.machine.state === STATES.GATE_OPENING;
   }
@@ -88,7 +106,9 @@ export class Renderer {
     const state = this.machine.state;
     const dpr = this.stage.dpr;
     const cam = this.camera;
+    perf.begin('backdrop');
     this._backdrop(ctx, scene.backdrop);
+    perf.end('backdrop');
 
     if (state === STATES.STOREFRONT && this.storefront) {
       // A zoom out of the storefront never happens, so this is the plain view —
@@ -141,14 +161,21 @@ export class Renderer {
 
     // The lifted chain sits over the dimmed case it came from.
     if (state === STATES.PIECE_DETAIL && this.chainRail) {
-      // Everything behind the piece falls out of focus. The case is already a
-      // single composited blit, so one filtered drawImage buys the whole effect.
+      perf.begin('detail');
+      // The out-of-focus case is baked ONCE on entry rather than running
+      // ctx.filter every frame — a full-screen blur per frame is one of the
+      // most expensive things canvas can be asked to do.
       const t = this.chainRail.focusT || 0;
-      const blur = this.crossfade ? 0 : 9 * t;
-      if (blur > 0.05) ctx.filter = `blur(${blur.toFixed(2)}px)`;
-      this.chainRail.draw(ctx, now);
-      if (blur > 0.05) ctx.filter = 'none';
+      this._ensureDetailBg(ctx, now, dpr);
+      if (this._detailBg) {
+        ctx.globalAlpha = 1;
+        ctx.drawImage(this._detailBg, 0, 0, DESIGN.W, DESIGN.H);
+      }
+      // dim it further as the piece comes forward
+      ctx.fillStyle = `rgba(4,9,20,${0.34 * t})`;
+      ctx.fillRect(0, 0, DESIGN.W, DESIGN.H);
       this.chainRail.drawFocused(ctx, now);
+      perf.end('detail');
     }
 
     if (state === STATES.CASE_FOCUS && this.chainRail) {

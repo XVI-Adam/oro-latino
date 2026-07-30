@@ -378,140 +378,215 @@ export class RunAtlas {
 export const BASE_GFX_PX = 26;        // graphic sprites are authored at this size
 
 /**
- * Compress the real 3–12mm range into a drawn 16–34px range. A power curve, so
- * a heavy Cuban still clearly outweighs a fine rope but the ratio falls from
- * ~4x to ~2.1x and the whole rail sits in one visual family.
+ * Real 3–12mm → drawn 14–40px. A ~2.9x spread, wide enough that a heavy Cuban
+ * and a fine rope are obviously different chains rather than the same chain at
+ * two sizes. Real millimetres stay in the data and on the tag.
  */
 export function graphicGauge(mm) {
   const m = clamp(Number(mm) || 4, 3, 12);
-  const t = (m - 3) / 9;                       // 0…1 across the real range
-  return 16 + 18 * Math.pow(t, 0.55);          // 16px … 34px
+  return 14 + 26 * Math.pow((m - 3) / 9, 0.70);
 }
 
-// Four flat steps. No gradients at draw time and none baked either — the whole
-// point is that you can see the steps.
-const G_EDGE = '#4A3008';    // dark contour
-const G_MID = '#C9962E';     // body
-const G_BRIGHT = '#F0D275';  // lit band
-const G_SPEC = '#FFFBEE';    // the single crisp dot
+/**
+ * Governing rule for spacing. Link COUNT is an output, never a target — it is
+ * just path length ÷ pitch. What we actually govern:
+ *   · overlap  consecutive links overlap at least this much, so no background
+ *              shows through the chain
+ *   · repeats  a style's full pattern unit must repeat at least 8 times over
+ *              the hang, so a figaro's 3+1 reads as rhythm and not accident
+ */
+export const MIN_OVERLAP = 0.40;
+export const MIN_PATTERN_REPEATS = 8;
 
-/** A face-on ring: flat body, one bright band, hard contour. */
-function gfxRingFace(ctx, rx, ry, thick, S) {
+// Four flat steps — you should be able to see them.
+const G_EDGE = '#4A3008';
+const G_MID = '#C9962E';
+const G_BRIGHT = '#F0D275';
+const G_DARK = '#7A5410';
+const G_SPEC = '#FFFBEE';
+
+// ── silhouette language ─────────────────────────────────────────────────────
+// Each style gets a genuinely different shape, not a re-proportioned oval. The
+// test is whether you can name the style from a grayscale silhouette.
+
+/** ROPE — no discrete links: one tile of a two-strand twist, tiled seamlessly. */
+function gfxRopeTwist(ctx, len, thick, S) {
+  const L = len * S, T = thick * S;
+  ctx.lineCap = 'butt';
+  // two strands crossing, drawn as steep diagonals so tiling reads as a helix
+  for (const [off, shade] of [[-0.22, G_DARK], [0.22, G_MID]]) {
+    ctx.strokeStyle = shade;
+    ctx.lineWidth = T * 0.92;
+    ctx.beginPath();
+    ctx.moveTo(-L / 2, off * T * 2.1);
+    ctx.lineTo(L / 2, -off * T * 2.1);
+    ctx.stroke();
+  }
+  // the groove between them — the diagonal that makes it read as spiralled
+  ctx.strokeStyle = G_EDGE;
+  ctx.lineWidth = Math.max(1.4, T * 0.20);
+  ctx.beginPath();
+  ctx.moveTo(-L / 2, T * 0.46);
+  ctx.lineTo(L / 2, -T * 0.46);
+  ctx.stroke();
+  // lit crest along the upper strand
+  ctx.strokeStyle = G_BRIGHT;
+  ctx.lineWidth = T * 0.26;
+  ctx.beginPath();
+  ctx.moveTo(-L / 2, -T * 0.16);
+  ctx.lineTo(L / 2, -T * 0.52);
+  ctx.stroke();
+}
+
+/** BOX — hard square, flat faces, crisp 90° corners. Architectural. */
+function gfxBox(ctx, size, thick, S) {
+  const H = (size * S) / 2, T = thick * S;
+  ctx.lineJoin = 'miter';
+  ctx.lineCap = 'butt';
+  const rect = () => { ctx.beginPath(); ctx.rect(-H, -H, H * 2, H * 2); ctx.closePath(); };
+  ctx.lineWidth = T + Math.max(2, T * 0.34);
+  ctx.strokeStyle = G_EDGE; rect(); ctx.stroke();
+  ctx.lineWidth = T;
+  ctx.strokeStyle = G_MID; rect(); ctx.stroke();
+  // only the two lit faces catch light — keeps the corners reading as corners
+  ctx.lineWidth = T * 0.5;
+  ctx.strokeStyle = G_BRIGHT;
+  ctx.beginPath();
+  ctx.moveTo(-H, H); ctx.lineTo(-H, -H); ctx.lineTo(H, -H);
+  ctx.stroke();
+}
+
+/** CUBAN — wide, flattened interlock: noticeably wider than tall. */
+function gfxCuban(ctx, rx, ry, thick, S) {
   const RX = rx * S, RY = ry * S, T = thick * S;
   ctx.lineCap = 'round';
-  // contour first, slightly fatter — reads as a drawn outline
-  ctx.lineWidth = T + Math.max(2, T * 0.30);
+  ctx.lineWidth = T + Math.max(2, T * 0.32);
   ctx.strokeStyle = G_EDGE;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, RX, RY, 0, 0, PI2);
-  ctx.stroke();
-  // body
+  ctx.beginPath(); ctx.ellipse(0, 0, RX, RY, 0, 0, PI2); ctx.stroke();
   ctx.lineWidth = T;
   ctx.strokeStyle = G_MID;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, RX, RY, 0, 0, PI2);
-  ctx.stroke();
-  // lit band across the top-left third of the ring
+  ctx.beginPath(); ctx.ellipse(0, 0, RX, RY, 0, 0, PI2); ctx.stroke();
+  ctx.lineWidth = T * 0.44;
+  ctx.strokeStyle = G_BRIGHT;
+  ctx.beginPath(); ctx.ellipse(0, 0, RX, RY, 0, Math.PI * 1.04, Math.PI * 1.70); ctx.stroke();
+}
+
+/** CABLE / clásico — simple round open link. The most air of any style. */
+function gfxCable(ctx, r, thick, S) {
+  const R = r * S, T = thick * S;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = T + Math.max(1.6, T * 0.34);
+  ctx.strokeStyle = G_EDGE;
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, PI2); ctx.stroke();
+  ctx.lineWidth = T;
+  ctx.strokeStyle = G_MID;
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, PI2); ctx.stroke();
   ctx.lineWidth = T * 0.42;
   ctx.strokeStyle = G_BRIGHT;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, RX, RY, 0, Math.PI * 1.02, Math.PI * 1.72);
-  ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, R, Math.PI * 1.05, Math.PI * 1.65); ctx.stroke();
 }
 
-/** The same ring turned edge-on: a clean capsule, one bright edge. */
-function gfxRingEdge(ctx, len, thick, S) {
-  const L = len * S, T = thick * S;
-  ctx.lineCap = 'round';
-  ctx.lineWidth = T + Math.max(2, T * 0.30);
-  ctx.strokeStyle = G_EDGE;
-  ctx.beginPath();
-  ctx.moveTo(-L / 2, 0); ctx.lineTo(L / 2, 0);
-  ctx.stroke();
-  ctx.lineWidth = T;
-  ctx.strokeStyle = G_MID;
-  ctx.beginPath();
-  ctx.moveTo(-L / 2, 0); ctx.lineTo(L / 2, 0);
-  ctx.stroke();
-  ctx.lineWidth = T * 0.34;
-  ctx.strokeStyle = G_BRIGHT;
-  ctx.beginPath();
-  ctx.moveTo(-L / 2 + T * 0.3, -T * 0.26); ctx.lineTo(L / 2 - T * 0.3, -T * 0.26);
-  ctx.stroke();
-}
-
-function gfxBoxFace(ctx, size, thick, S) {
-  const H = (size * S) / 2, T = thick * S, R = H * 0.34;
-  const path = () => {
+/** DIAMOND-CUT — flat faceted planes with hard bright/dark edges. */
+function gfxDiamond(ctx, rx, ry, S) {
+  const RX = rx * S, RY = ry * S;
+  const facet = (pts, fill) => {
     ctx.beginPath();
-    ctx.moveTo(-H + R, -H);
-    ctx.arcTo(H, -H, H, H, R);
-    ctx.arcTo(H, H, -H, H, R);
-    ctx.arcTo(-H, H, -H, -H, R);
-    ctx.arcTo(-H, -H, H, -H, R);
+    ctx.moveTo(pts[0][0] * RX, pts[0][1] * RY);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0] * RX, pts[i][1] * RY);
     ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
   };
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = T + Math.max(2, T * 0.30);
-  ctx.strokeStyle = G_EDGE; path(); ctx.stroke();
-  ctx.lineWidth = T;
-  ctx.strokeStyle = G_MID; path(); ctx.stroke();
-  ctx.lineWidth = T * 0.40;
-  ctx.strokeStyle = G_BRIGHT;
+  // four planes meeting at a ridge — the faceting IS the signature
+  facet([[-1, 0], [-0.3, -1], [0.3, -1], [1, 0]], G_BRIGHT);
+  facet([[-1, 0], [1, 0], [0.3, 0.35], [-0.3, 0.35]], G_MID);
+  facet([[-1, 0], [-0.3, 0.35], [-0.3, 1], [-1, 0.3]], G_DARK);
+  facet([[1, 0], [0.3, 0.35], [0.3, 1], [1, 0.3]], G_DARK);
+  ctx.strokeStyle = G_EDGE;
+  ctx.lineWidth = Math.max(1.2, RY * 0.10);
   ctx.beginPath();
-  ctx.moveTo(-H + R, -H); ctx.lineTo(H - R, -H);
+  ctx.moveTo(-RX, 0); ctx.lineTo(RX, 0);
+  ctx.stroke();
+  ctx.strokeStyle = G_SPEC;
+  ctx.lineWidth = Math.max(1, RY * 0.07);
+  ctx.beginPath();
+  ctx.moveTo(-RX * 0.3, -RY); ctx.lineTo(RX * 0.3, -RY);
   ctx.stroke();
 }
 
-// Footprints are multiples of the drawn gauge, same convention as the mm tier.
-// Footprints are ~1.7x the mm tier's: at case level a link should be a shape
-// you can read, not a texture. Wide pitch plus wide links keeps the ~25%
-// overlap that makes the weave legible.
+// Footprints are multiples of the drawn gauge. All ~57% of the previous pass.
 export const GFX_VARIANTS = {
-  cubanFace: { wMM: 2.60, hMM: 1.95, draw: (c, S) => gfxRingFace(c, 1.06, 0.76, 0.42, S) },
-  cubanEdge: { wMM: 1.70, hMM: 0.78, draw: (c, S) => gfxRingEdge(c, 1.32, 0.44, S) },
-  ropeFace:  { wMM: 1.95, hMM: 1.62, draw: (c, S) => gfxRingFace(c, 0.78, 0.64, 0.40, S) },
-  ropeEdge:  { wMM: 1.48, hMM: 0.74, draw: (c, S) => gfxRingEdge(c, 1.10, 0.40, S) },
-  boxFace:   { wMM: 1.86, hMM: 1.86, draw: (c, S) => gfxBoxFace(c, 1.44, 0.40, S) },
-  boxEdge:   { wMM: 1.38, hMM: 0.78, draw: (c, S) => gfxRingEdge(c, 1.00, 0.42, S) },
-  figShortFace: { wMM: 1.76, hMM: 1.52, draw: (c, S) => gfxRingFace(c, 0.70, 0.60, 0.38, S) },
-  figShortEdge: { wMM: 1.34, hMM: 0.72, draw: (c, S) => gfxRingEdge(c, 0.96, 0.38, S) },
-  figLongFace:  { wMM: 2.90, hMM: 1.52, draw: (c, S) => gfxRingFace(c, 1.26, 0.60, 0.38, S) },
-  figLongEdge:  { wMM: 1.48, hMM: 0.72, draw: (c, S) => gfxRingEdge(c, 1.06, 0.38, S) },
+  ropeTwist:    { wMM: 0.62, hMM: 0.98, draw: (c, S) => gfxRopeTwist(c, 0.62, 0.46, S) },
+
+  boxFace:      { wMM: 1.06, hMM: 1.06, draw: (c, S) => gfxBox(c, 0.84, 0.20, S) },
+  boxEdge:      { wMM: 0.50, hMM: 0.46, draw: (c, S) => gfxCable(c, 0.19, 0.19, S) },
+
+  cubanFace:    { wMM: 1.62, hMM: 0.98, draw: (c, S) => gfxCuban(c, 0.66, 0.36, 0.24, S) },
+  cubanEdge:    { wMM: 0.72, hMM: 0.44, draw: (c, S) => gfxCuban(c, 0.26, 0.15, 0.20, S) },
+
+  figShortFace: { wMM: 0.78, hMM: 0.76, draw: (c, S) => gfxCable(c, 0.30, 0.17, S) },
+  figLongFace:  { wMM: 1.86, hMM: 0.76, draw: (c, S) => gfxCuban(c, 0.80, 0.28, 0.17, S) },
+
+  cableFace:    { wMM: 0.90, hMM: 0.90, draw: (c, S) => gfxCable(c, 0.36, 0.14, S) },
+  cableEdge:    { wMM: 0.40, hMM: 0.78, draw: (c, S) => gfxCable(c, 0.31, 0.13, S) },
+
+  diaFace:      { wMM: 1.02, hMM: 0.84, draw: (c, S) => gfxDiamond(c, 0.42, 0.33, S) },
+  diaEdge:      { wMM: 0.46, hMM: 0.60, draw: (c, S) => gfxDiamond(c, 0.19, 0.26, S) },
 };
 
-// Much wider pitch than the mm tier: fewer, larger, calmer links.
-// Pitch is ~1.0x gauge — roughly double the mm tier — so link counts fall hard
-// while the enlarged footprints keep the faces overlapping.
+/**
+ * Pitch is a fraction of the FACE link's own width, so the overlap it produces
+ * is explicit and independent of gauge. `pattern` is how many entries make one
+ * full repeat, used for the 8-repeats rule.
+ */
 export const GFX_STYLES = {
-  cuban:  { period: 2, seq: (i) => (i % 2 === 0
-    ? { v: 'cubanFace', pitch: 1.02, ang: 0, edge: false }
-    : { v: 'cubanEdge', pitch: 1.02, ang: 0, edge: true }) },
-  rope:   { period: 2, seq: (i) => (i % 2 === 0
-    ? { v: 'ropeFace', pitch: 0.80, ang: 0.42, edge: false }
-    : { v: 'ropeEdge', pitch: 0.80, ang: -0.42, edge: true }) },
-  box:    { period: 2, seq: (i) => (i % 2 === 0
-    ? { v: 'boxFace', pitch: 0.92, ang: 0, edge: false }
-    : { v: 'boxEdge', pitch: 0.92, ang: 0, edge: true }) },
-  figaro: { period: 8, seq: (i) => {
-    const m = i % 8;
-    if (m === 6) return { v: 'figLongFace', pitch: 1.55, ang: 0, edge: false };
-    if (m === 7) return { v: 'figLongEdge', pitch: 1.00, ang: 0, edge: true };
-    return m % 2 === 0
-      ? { v: 'figShortFace', pitch: 0.86, ang: 0, edge: false }
-      : { v: 'figShortEdge', pitch: 0.86, ang: 0, edge: true };
-  } },
+  // continuous cord: tiles abut exactly, no discrete links at all
+  rope: { period: 1, pattern: 1, continuous: true,
+    seq: () => ({ v: 'ropeTwist', pitch: 0.615, ang: 0, edge: false }) },
+
+  box: { period: 2, pattern: 2,
+    seq: (i) => (i % 2 === 0
+      ? { v: 'boxFace', pitch: 0.30, ang: 0, edge: false }
+      : { v: 'boxEdge', pitch: 0.30, ang: 0, edge: true }) },
+
+  // ~45% overlap, and every link wider than it is tall
+  cuban: { period: 2, pattern: 2,
+    seq: (i) => (i % 2 === 0
+      ? { v: 'cubanFace', pitch: 0.445, ang: 0, edge: false }
+      : { v: 'cubanEdge', pitch: 0.445, ang: 0, edge: true }) },
+
+  // 3 short then 1 long; the long link is 2.4x the short one
+  figaro: { period: 4, pattern: 4,
+    seq: (i) => (i % 4 === 3
+      ? { v: 'figLongFace', pitch: 0.72, ang: 0, edge: false }
+      : { v: 'figShortFace', pitch: 0.34, ang: 0, edge: false }) },
+
+  cable: { period: 2, pattern: 2,
+    seq: (i) => (i % 2 === 0
+      ? { v: 'cableFace', pitch: 0.40, ang: 0, edge: false }
+      : { v: 'cableEdge', pitch: 0.40, ang: Math.PI / 2, edge: true }) },
+
+  diamond: { period: 2, pattern: 2,
+    seq: (i) => (i % 2 === 0
+      ? { v: 'diaFace', pitch: 0.34, ang: 0, edge: false }
+      : { v: 'diaEdge', pitch: 0.34, ang: 0, edge: true }) },
 };
+
+/** Drawn width of a style's widest (face) link, in px — pendants size off this. */
+export function linkWidthPx(style, mm) {
+  const st = GFX_STYLES[style] || GFX_STYLES.cable;
+  const v = GFX_VARIANTS[st.seq(0).v];
+  return (v ? v.wMM : 1) * graphicGauge(mm);
+}
 
 /** Tier descriptor: which tables to use and what the sprites were authored at. */
 export function tierSpec(tier) {
-  // A run strip has to be baked into a square cell big enough to rotate in, so
-  // its memory grows with the SQUARE of the strip length. The graphic tier's
-  // links are ~1.7x wider, which made 8-link strips cost ~12MB apiece — so it
-  // uses 4-link strips at 1.5x source instead. Same look, a fraction of the VRAM.
+  // A run strip bakes into a square cell big enough to rotate in, so its memory
+  // grows with the SQUARE of strip length. Smaller graphic links (this pass)
+  // mean smaller cells, which buys back room for longer strips: 6 links.
   return tier === 'detail'
     ? { variants: VARIANTS, styles: STYLES, baseGauge: BASE_MM * PX_PER_MM,
         ss: 2, runLinks: 8 }
     : { variants: GFX_VARIANTS, styles: GFX_STYLES, baseGauge: BASE_GFX_PX,
-        ss: 1.5, runLinks: 4 };
+        ss: 1.6, runLinks: 6 };
 }
